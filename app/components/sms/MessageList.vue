@@ -57,9 +57,9 @@ const isPendingApproval = (ui?: SmsChatUi) => asApproval(ui)?.batchId === props.
       >
         <div
           v-if="message.content"
-          class="whitespace-pre-wrap rounded-2xl border border-default bg-default px-3.5 py-2 text-sm leading-relaxed text-highlighted"
+          class="rounded-2xl border border-default bg-default px-3.5 py-2"
         >
-          {{ message.content }}
+          <ChatMarkdown :content="message.content" />
         </div>
 
         <SmsToolCallCard

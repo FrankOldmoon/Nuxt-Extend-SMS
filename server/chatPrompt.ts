@@ -24,6 +24,7 @@ export function buildSmsChatPrompt(context: unknown): string {
     '2. 需要写入时，调用对应的写能力（sms.students.create/update/delete、sms.enrollments.create/withdraw、sms.teachers.assign、sms.guardians.link）。写能力会生成表单，由用户确认后执行。',
     '3. 用户确认表单后，服务端会返回执行结果；在此之前不要说操作已经完成。',
     '4. 删除学生属于高风险操作，会弹出审批卡片；不要尝试绕过审批。',
-    '5. 如果查询结果为空，先确认姓名/学号是否准确，再建议用户调整条件。'
+    '5. 如果查询结果为空，先确认姓名/学号是否准确，再建议用户调整条件。',
+    '6. 查询结果会由界面以固定表格展示（学生表/班级表/选课表等）。请只回答结论与数量，不要输出 Markdown 表格，也不要逐条复述全部字段。'
   ].join('\n')
 }

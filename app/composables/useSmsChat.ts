@@ -28,6 +28,19 @@ export interface SmsFormDescriptor {
   layout?: 'single-column' | 'two-column'
 }
 
+export interface SmsToolTableColumn {
+  key: string
+  label: string
+  format?: 'text' | 'number' | 'boolean' | 'datetime'
+}
+
+/** Fixed table projection declared by the capability (server-owned columns). */
+export interface SmsToolTable {
+  columns: SmsToolTableColumn[]
+  rows: Array<Record<string, unknown>>
+  total: number
+}
+
 export interface SmsToolCall {
   id: string
   name: string
@@ -36,6 +49,7 @@ export interface SmsToolCall {
   summary?: string
   arguments?: unknown
   error?: string
+  table?: SmsToolTable
 }
 
 export interface SmsFormUi {

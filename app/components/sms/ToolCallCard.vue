@@ -18,34 +18,36 @@ const statusIcon = computed(() => props.card.status === 'success'
 </script>
 
 <template>
-  <details class="group mt-2 rounded-lg border border-default bg-elevated/60 text-xs">
-    <summary class="flex cursor-pointer list-none items-center gap-2 px-2.5 py-1.5">
+  <div class="mt-2 rounded-lg border border-default bg-elevated/60 text-xs">
+    <div class="flex items-center gap-2 px-2.5 py-1.5">
       <UIcon
         :name="statusIcon"
         class="size-3.5 shrink-0"
         :class="statusClass"
       />
-      <span class="font-medium text-highlighted">{{ card.title }}</span>
+      <span class="shrink-0 font-medium text-highlighted">{{ card.title }}</span>
       <span class="min-w-0 flex-1 truncate text-muted">{{ card.summary }}</span>
-      <UIcon
-        name="i-lucide-chevron-right"
-        class="size-3.5 shrink-0 text-muted transition-transform group-open:rotate-90"
-      />
-    </summary>
-    <div class="border-t border-default px-2.5 py-2">
-      <p class="mb-1 font-mono text-[11px] text-muted">
-        {{ card.name }}
-      </p>
-      <pre
-        v-if="hasArguments"
-        class="max-h-48 overflow-auto whitespace-pre-wrap break-all rounded bg-default p-2 font-mono text-[11px] text-toned"
-      >{{ JSON.stringify(card.arguments, null, 2) }}</pre>
-      <p
-        v-else
-        class="text-[11px] text-muted"
-      >
-        无参数
-      </p>
     </div>
-  </details>
+
+    <!-- Fixed, server-defined table for read capabilities. -->
+    <SmsResultTable
+      v-if="card.table"
+      :table="card.table"
+      class="mx-2.5 mb-2.5 mt-0"
+    />
+
+    <details
+      v-if="hasArguments"
+      class="group border-t border-default"
+    >
+      <summary class="flex cursor-pointer list-none items-center gap-1 px-2.5 py-1 text-[11px] text-muted">
+        <UIcon
+          name="i-lucide-chevron-right"
+          class="size-3 transition-transform group-open:rotate-90"
+        />
+        调用参数
+      </summary>
+      <pre class="max-h-48 overflow-auto whitespace-pre-wrap break-all border-t border-default px-2.5 py-2 font-mono text-[11px] text-toned">{{ JSON.stringify(card.arguments, null, 2) }}</pre>
+    </details>
+  </div>
 </template>

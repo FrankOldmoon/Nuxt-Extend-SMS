@@ -124,7 +124,15 @@ const studentSearch: Capability = {
       limit: typeof args.limit === 'number' ? args.limit : undefined
     })
   },
-  summarize: rows => listSummary('学生', rows)
+  summarize: rows => listSummary('学生', rows),
+  resultView: {
+    kind: 'table',
+    columns: [
+      { key: 'name', label: '姓名' },
+      { key: 'studentNo', label: '学号' },
+      { key: 'classId', label: '班级 ID', format: 'number' }
+    ]
+  }
 }
 
 const studentGet: Capability = {
@@ -151,6 +159,14 @@ const studentGet: Capability = {
   summarize: (value) => {
     const row = isRecord(value) ? value : {}
     return `学生：${row.name ?? row.id}（学号 ${row.studentNo ?? '-'}）`
+  },
+  resultView: {
+    kind: 'table',
+    columns: [
+      { key: 'name', label: '姓名' },
+      { key: 'studentNo', label: '学号' },
+      { key: 'classId', label: '班级 ID', format: 'number' }
+    ]
   }
 }
 
@@ -180,7 +196,15 @@ const classList: Capability = {
       limit: typeof args.limit === 'number' ? args.limit : undefined
     })
   },
-  summarize: rows => listSummary('班级', rows)
+  summarize: rows => listSummary('班级', rows),
+  resultView: {
+    kind: 'table',
+    columns: [
+      { key: 'name', label: '班级' },
+      { key: 'academicYearId', label: '学年 ID', format: 'number' },
+      { key: 'gradeId', label: '年级 ID', format: 'number' }
+    ]
+  }
 }
 
 const teacherList: Capability = {
@@ -209,7 +233,15 @@ const teacherList: Capability = {
       limit: typeof args.limit === 'number' ? args.limit : undefined
     })
   },
-  summarize: rows => listSummary('教师', rows)
+  summarize: rows => listSummary('教师', rows),
+  resultView: {
+    kind: 'table',
+    columns: [
+      { key: 'name', label: '姓名' },
+      { key: 'employeeNo', label: '工号' },
+      { key: 'userId', label: '用户 ID', format: 'number' }
+    ]
+  }
 }
 
 const enrollmentList: Capability = {
@@ -246,7 +278,16 @@ const enrollmentList: Capability = {
       status
     })
   },
-  summarize: rows => listSummary('选课记录', rows)
+  summarize: rows => listSummary('选课记录', rows),
+  resultView: {
+    kind: 'table',
+    columns: [
+      { key: 'studentName', label: '学生' },
+      { key: 'className', label: '班级' },
+      { key: 'status', label: '状态' },
+      { key: 'enrolledAt', label: '选课时间', format: 'datetime' }
+    ]
+  }
 }
 
 const guardianList: Capability = {
@@ -275,7 +316,15 @@ const guardianList: Capability = {
       limit: typeof args.limit === 'number' ? args.limit : undefined
     })
   },
-  summarize: rows => listSummary('监护人', rows)
+  summarize: rows => listSummary('监护人', rows),
+  resultView: {
+    kind: 'table',
+    columns: [
+      { key: 'name', label: '姓名' },
+      { key: 'phone', label: '电话' },
+      { key: 'userId', label: '用户 ID', format: 'number' }
+    ]
+  }
 }
 
 // ---------------------------------------------------------------------------

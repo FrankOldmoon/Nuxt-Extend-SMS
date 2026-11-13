@@ -75,6 +75,22 @@ describe('SMS capabilities', () => {
     expect(smsModule.apiVersion).toBe('1')
   })
 
+  it('declares a fixed result table for every read capability', () => {
+    const reads = smsCapabilities.filter(capability => capability.operation === 'query')
+    expect(reads.length).toBeGreaterThan(0)
+    for (const capability of reads) {
+      expect(capability.resultView?.kind, capability.id).toBe('table')
+      expect(capability.resultView?.columns.length, capability.id).toBeGreaterThan(0)
+      for (const column of capability.resultView!.columns) {
+        expect(column.key, capability.id).toBeTruthy()
+        expect(column.label, capability.id).toBeTruthy()
+      }
+    }
+    for (const capability of smsCapabilities.filter(item => item.operation === 'command')) {
+      expect(capability.resultView, capability.id).toBeUndefined()
+    }
+  })
+
   it('hides write capabilities from read-only roles', () => {
     const tools = new ToolRegistry<SmsActor>()
     registerCapabilities(tools, 'sms', smsCapabilities)
