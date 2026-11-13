@@ -106,4 +106,19 @@ describe('SMS capabilities', () => {
 
     expect(describeCapabilities(['*'])).toHaveLength(smsCapabilities.length)
   })
+
+  it('only accepts query/limit props for the student-table component', async () => {
+    const { isSmsStudentTableProps } = await import('../register')
+
+    expect(isSmsStudentTableProps({})).toBe(true)
+    expect(isSmsStudentTableProps({ query: '张三', limit: 10 })).toBe(true)
+    expect(isSmsStudentTableProps({ query: 123 })).toBe(false)
+    expect(isSmsStudentTableProps({ limit: 0 })).toBe(false)
+    expect(isSmsStudentTableProps({ limit: 201 })).toBe(false)
+    expect(isSmsStudentTableProps({ limit: 1.5 })).toBe(false)
+    // Data must never come from the model.
+    expect(isSmsStudentTableProps({ rows: [{ name: '伪造学生' }] })).toBe(false)
+    expect(isSmsStudentTableProps({ students: [{ name: '伪造学生' }] })).toBe(false)
+    expect(isSmsStudentTableProps(null)).toBe(false)
+  })
 })

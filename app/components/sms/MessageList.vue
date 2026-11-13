@@ -1,11 +1,23 @@
 <script setup lang="ts">
+import type { Component } from 'vue'
 import type {
   SmsApprovalUi,
   SmsChatMessage,
   SmsChatUi,
+  SmsComponentUi,
   SmsFormUi,
   SmsResultUi
 } from '../../composables/useSmsChat'
+import SmsStudentTable from './StudentTable.vue'
+
+/**
+ * Client mapping for the server-registered component ids. Importing the
+ * components explicitly keeps them in the bundle: Nuxt only auto-registers
+ * components that appear in a template, and these are resolved by id.
+ */
+const chatComponents: Record<string, Component> = {
+  'sms.student-table': SmsStudentTable
+}
 
 const props = defineProps<{
   messages: SmsChatMessage[]
@@ -30,6 +42,10 @@ function asApproval(ui?: SmsChatUi): SmsApprovalUi | null {
 
 function asResult(ui?: SmsChatUi): SmsResultUi | null {
   return ui?.kind === 'result' ? ui : null
+}
+
+function asComponent(ui?: SmsChatUi): SmsComponentUi | null {
+  return ui?.kind === 'component' ? ui : null
 }
 
 const isPendingForm = (ui?: SmsChatUi) => asForm(ui)?.draftId === props.pendingFormId
@@ -118,6 +134,12 @@ const isPendingApproval = (ui?: SmsChatUi) => asApproval(ui)?.batchId === props.
             </p>
           </div>
         </div>
+
+        <ChatComponentBlock
+          v-else-if="asComponent(message.ui)"
+          :ui="asComponent(message.ui)!"
+          :components="chatComponents"
+        />
       </div>
     </template>
   </div>

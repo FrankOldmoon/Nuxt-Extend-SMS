@@ -87,7 +87,15 @@ export interface SmsToolsUi {
   cards: SmsToolCall[]
 }
 
-export type SmsChatUi = SmsFormUi | SmsApprovalUi | SmsResultUi | SmsToolsUi
+/** Registered Vue component requested by the model via a ```component block. */
+export interface SmsComponentUi {
+  kind: 'component'
+  component: string
+  version?: string
+  props: Record<string, unknown>
+}
+
+export type SmsChatUi = SmsFormUi | SmsApprovalUi | SmsResultUi | SmsToolsUi | SmsComponentUi
 
 export interface SmsChatMessage {
   id?: number

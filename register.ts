@@ -603,12 +603,32 @@ const smsApis: ModuleApiDefinition<SmsActor>[] = [
   }
 ]
 
-const smsUi: UiDefinition<{ rows?: unknown[], query?: string }, Record<string, unknown>> = {
+/**
+ * Chat component `sms.student-table`.
+ *
+ * Props are intentionally limited to a search query and a row limit: the
+ * component loads rows itself under the viewer's permissions, so the model can
+ * never inject or fabricate student data.
+ */
+export type SmsStudentTableProps = { query?: string, limit?: number }
+
+export function isSmsStudentTableProps(value: unknown): value is SmsStudentTableProps {
+  if (!isRecord(value)) return false
+  if ('rows' in value || 'students' in value) return false
+  if (value.query !== undefined && typeof value.query !== 'string') return false
+  if (value.limit !== undefined) {
+    if (typeof value.limit !== 'number' || !Number.isSafeInteger(value.limit)) return false
+    if (value.limit < 1 || value.limit > 200) return false
+  }
+  return true
+}
+
+const smsUi: UiDefinition<SmsStudentTableProps, Record<string, unknown>> = {
   id: 'sms.student-table',
   moduleId: 'sms',
-  label: 'Student table',
+  label: '学生表格',
   version: '1.0',
-  schema: value => isRecord(value) && (Array.isArray(value.rows) || typeof value.query === 'string'),
+  schema: isSmsStudentTableProps,
   render: props => ({ component: 'sms.student-table', props })
 }
 
@@ -627,7 +647,8 @@ export function registerSmsModule(registries: SmsRegistries): void {
   registries.ui.register({
     id: smsUi.id,
     version: smsUi.version,
+    label: smsUi.label,
     schema: smsUi.schema,
-    render: props => smsUi.render(props as { rows?: unknown[], query?: string })
+    render: props => smsUi.render(props as SmsStudentTableProps)
   })
 }
