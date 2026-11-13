@@ -1,9 +1,14 @@
-import { and, eq } from 'drizzle-orm'
+import { and, asc, eq, ilike, inArray, isNull, or } from 'drizzle-orm'
 import { createError } from 'h3'
 import { db } from '../../../server/database'
 import { writeAudit } from '../../../server/sdk'
-import { smsGuardians, smsStudentGuardians } from './database/schema'
-import { canUseSms, requireSmsOrganization, type SmsActor } from './context'
+import {
+  smsGuardians,
+  smsStudentGuardians,
+  smsStudents,
+  smsTeacherAssignments
+} from './database/schema'
+import { canUseSms, isSmsAdmin, requireSmsOrganization, type SmsActor } from './context'
 import { assertStudentInContext } from './enrollment'
 
 function requireManage(actor: SmsActor, resource: string): number {
@@ -120,4 +125,80 @@ export async function guardianStudentIds(actor: SmsActor): Promise<number[]> {
       eq(smsGuardians.userId, actor.userId)
     ))
   return rows.map(row => row.studentId)
+}
+
+/** Guardians visible to the actor (admin: all; guardian: self; others: linked). */
+export async function listGuardians(actor: SmsActor, options: { query?: string, limit?: number } = {}) {
+  const organizationId = requireSmsOrganization(actor)
+  const conditions = [
+    eq(smsGuardians.organizationId, organizationId),
+    isNull(smsGuardians.deletedAt)
+  ]
+
+  if (!isSmsAdmin(actor)) {
+    if (actor.roleName === 'guardian') {
+      conditions.push(eq(smsGuardians.userId, actor.userId))
+    } else {
+      let studentIds: number[] = []
+      if (actor.roleName === 'student') {
+        const [row] = await db.select({ id: smsStudents.id })
+          .from(smsStudents)
+          .where(and(
+            eq(smsStudents.organizationId, organizationId),
+            eq(smsStudents.userId, actor.userId)
+          ))
+          .limit(1)
+        if (row) studentIds = [row.id]
+      } else if (actor.roleName === 'teacher') {
+        const classes = await db.select({ classId: smsTeacherAssignments.classId })
+          .from(smsTeacherAssignments)
+          .where(and(
+            eq(smsTeacherAssignments.organizationId, organizationId),
+            eq(smsTeacherAssignments.teacherUserId, actor.userId)
+          ))
+        const classIds = classes.map(row => row.classId)
+        if (classIds.length) {
+          const rows = await db.select({ studentId: smsStudentGuardians.studentId })
+            .from(smsStudentGuardians)
+            .innerJoin(smsStudents, eq(smsStudents.id, smsStudentGuardians.studentId))
+            .where(and(
+              eq(smsStudentGuardians.organizationId, organizationId),
+              inArray(smsStudents.classId, classIds)
+            ))
+          studentIds = rows.map(row => row.studentId)
+        }
+      }
+      if (!studentIds.length) {
+        conditions.push(eq(smsGuardians.id, -1))
+      } else {
+        const guardianRows = await db.select({ guardianId: smsStudentGuardians.guardianId })
+          .from(smsStudentGuardians)
+          .where(and(
+            eq(smsStudentGuardians.organizationId, organizationId),
+            inArray(smsStudentGuardians.studentId, studentIds)
+          ))
+        const guardianIds = [...new Set(guardianRows.map(row => row.guardianId))]
+        conditions.push(guardianIds.length ? inArray(smsGuardians.id, guardianIds) : eq(smsGuardians.id, -1))
+      }
+    }
+  }
+
+  const clean = options.query?.trim()
+  if (clean) {
+    conditions.push(or(
+      ilike(smsGuardians.name, `%${clean}%`),
+      ilike(smsGuardians.phone, `%${clean}%`)
+    )!)
+  }
+
+  const limit = Math.min(Math.max(Math.floor(options.limit ?? 100), 1), 200)
+  return await db.select({
+    id: smsGuardians.id,
+    userId: smsGuardians.userId,
+    name: smsGuardians.name,
+    phone: smsGuardians.phone
+  }).from(smsGuardians)
+    .where(and(...conditions))
+    .orderBy(asc(smsGuardians.name))
+    .limit(limit)
 }

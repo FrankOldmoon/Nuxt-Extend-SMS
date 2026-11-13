@@ -1,9 +1,9 @@
-import { and, eq } from 'drizzle-orm'
+import { and, asc, eq, ilike, isNull, or } from 'drizzle-orm'
 import { createError } from 'h3'
 import { db } from '../../../server/database'
 import { writeAudit } from '../../../server/sdk'
 import { smsTeacherAssignments, smsTeachers } from './database/schema'
-import { canUseSms, requireSmsOrganization, type SmsActor } from './context'
+import { canUseSms, isSmsAdmin, requireSmsOrganization, type SmsActor } from './context'
 import {
   assertAcademicYearInContext,
   assertSubjectInContext,
@@ -150,4 +150,33 @@ export async function assignTeacher(actor: SmsActor, input: AssignTeacherInput) 
     })
     return row
   })
+}
+
+/** Teachers visible to the actor: admins see all, teachers see themselves. */
+export async function listTeachers(actor: SmsActor, options: { query?: string, limit?: number } = {}) {
+  const organizationId = requireSmsOrganization(actor)
+  const conditions = [
+    eq(smsTeachers.organizationId, organizationId),
+    isNull(smsTeachers.deletedAt)
+  ]
+  if (!isSmsAdmin(actor)) conditions.push(eq(smsTeachers.userId, actor.userId))
+
+  const clean = options.query?.trim()
+  if (clean) {
+    conditions.push(or(
+      ilike(smsTeachers.name, `%${clean}%`),
+      ilike(smsTeachers.employeeNo, `%${clean}%`)
+    )!)
+  }
+
+  const limit = Math.min(Math.max(Math.floor(options.limit ?? 100), 1), 200)
+  return await db.select({
+    id: smsTeachers.id,
+    userId: smsTeachers.userId,
+    name: smsTeachers.name,
+    employeeNo: smsTeachers.employeeNo
+  }).from(smsTeachers)
+    .where(and(...conditions))
+    .orderBy(asc(smsTeachers.name))
+    .limit(limit)
 }

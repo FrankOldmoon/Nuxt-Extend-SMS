@@ -1,9 +1,16 @@
-import { and, eq } from 'drizzle-orm'
+import { and, asc, desc, eq, inArray } from 'drizzle-orm'
 import { createError } from 'h3'
 import { db } from '../../../server/database'
 import { writeAudit } from '../../../server/sdk'
-import { smsEnrollments, smsStudents } from './database/schema'
-import { canUseSms, requireSmsOrganization, type SmsActor } from './context'
+import {
+  smsClasses,
+  smsEnrollments,
+  smsGuardians,
+  smsStudentGuardians,
+  smsStudents,
+  smsTeacherAssignments
+} from './database/schema'
+import { canUseSms, isSmsAdmin, requireSmsOrganization, type SmsActor } from './context'
 import { assertAcademicYearInContext, assertTermInContext, classInContext } from './academics'
 
 function requireManage(actor: SmsActor, resource: string): number {
@@ -142,4 +149,106 @@ export async function withdrawEnrollment(actor: SmsActor, enrollmentId: number) 
     })
     return row
   })
+}
+
+// ---------------------------------------------------------------------------
+// Read helpers for pages and capabilities
+// ---------------------------------------------------------------------------
+
+async function enrollmentScopeConditions(actor: SmsActor) {
+  const organizationId = requireSmsOrganization(actor)
+  const conditions = [eq(smsEnrollments.organizationId, organizationId)]
+  if (isSmsAdmin(actor)) return conditions
+
+  if (actor.roleName === 'student') {
+    const [row] = await db.select({ id: smsStudents.id })
+      .from(smsStudents)
+      .where(and(
+        eq(smsStudents.organizationId, organizationId),
+        eq(smsStudents.userId, actor.userId)
+      ))
+      .limit(1)
+    conditions.push(row ? eq(smsEnrollments.studentId, row.id) : eq(smsEnrollments.id, -1))
+    return conditions
+  }
+
+  if (actor.roleName === 'guardian') {
+    const rows = await db.select({ studentId: smsStudentGuardians.studentId })
+      .from(smsStudentGuardians)
+      .innerJoin(smsGuardians, eq(smsGuardians.id, smsStudentGuardians.guardianId))
+      .where(and(
+        eq(smsStudentGuardians.organizationId, organizationId),
+        eq(smsGuardians.userId, actor.userId)
+      ))
+    const ids = rows.map(row => row.studentId)
+    conditions.push(ids.length ? inArray(smsEnrollments.studentId, ids) : eq(smsEnrollments.id, -1))
+    return conditions
+  }
+
+  const classes = await db.select({ classId: smsTeacherAssignments.classId })
+    .from(smsTeacherAssignments)
+    .where(and(
+      eq(smsTeacherAssignments.organizationId, organizationId),
+      eq(smsTeacherAssignments.teacherUserId, actor.userId)
+    ))
+  const classIds = classes.map(row => row.classId)
+  conditions.push(classIds.length ? inArray(smsEnrollments.classId, classIds) : eq(smsEnrollments.id, -1))
+  return conditions
+}
+
+export interface EnrollmentListOptions {
+  studentId?: number | null
+  classId?: number | null
+  status?: 'active' | 'completed' | 'withdrawn' | null
+  limit?: number
+}
+
+export async function listEnrollments(actor: SmsActor, options: EnrollmentListOptions = {}) {
+  const conditions = await enrollmentScopeConditions(actor)
+  if (options.studentId) conditions.push(eq(smsEnrollments.studentId, options.studentId))
+  if (options.classId) conditions.push(eq(smsEnrollments.classId, options.classId))
+  if (options.status) conditions.push(eq(smsEnrollments.status, options.status))
+
+  const limit = Math.min(Math.max(Math.floor(options.limit ?? 100), 1), 200)
+  return await db.select({
+    id: smsEnrollments.id,
+    studentId: smsEnrollments.studentId,
+    studentName: smsStudents.name,
+    classId: smsEnrollments.classId,
+    className: smsClasses.name,
+    academicYearId: smsEnrollments.academicYearId,
+    termId: smsEnrollments.termId,
+    status: smsEnrollments.status,
+    enrolledAt: smsEnrollments.enrolledAt,
+    endedAt: smsEnrollments.endedAt
+  }).from(smsEnrollments)
+    .leftJoin(smsStudents, eq(smsStudents.id, smsEnrollments.studentId))
+    .leftJoin(smsClasses, eq(smsClasses.id, smsEnrollments.classId))
+    .where(and(...conditions))
+    .orderBy(desc(smsEnrollments.enrolledAt), asc(smsEnrollments.id))
+    .limit(limit)
+}
+
+/** One enrollment visible to the actor; 404 otherwise. */
+export async function findEnrollment(actor: SmsActor, enrollmentId: number) {
+  const conditions = await enrollmentScopeConditions(actor)
+  conditions.push(eq(smsEnrollments.id, enrollmentId))
+  const [row] = await db.select({
+    id: smsEnrollments.id,
+    studentId: smsEnrollments.studentId,
+    studentName: smsStudents.name,
+    classId: smsEnrollments.classId,
+    className: smsClasses.name,
+    academicYearId: smsEnrollments.academicYearId,
+    termId: smsEnrollments.termId,
+    status: smsEnrollments.status,
+    enrolledAt: smsEnrollments.enrolledAt,
+    endedAt: smsEnrollments.endedAt
+  }).from(smsEnrollments)
+    .leftJoin(smsStudents, eq(smsStudents.id, smsEnrollments.studentId))
+    .leftJoin(smsClasses, eq(smsClasses.id, smsEnrollments.classId))
+    .where(and(...conditions))
+    .limit(1)
+  if (!row) throw createError({ statusCode: 404, message: 'Enrollment not found' })
+  return row
 }

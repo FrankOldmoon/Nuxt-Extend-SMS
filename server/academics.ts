@@ -1,4 +1,4 @@
-import { and, eq } from 'drizzle-orm'
+import { and, asc, desc, eq, ilike, inArray, isNull, or } from 'drizzle-orm'
 import { createError } from 'h3'
 import { db } from '../../../server/database'
 import { writeAudit } from '../../../server/sdk'
@@ -6,10 +6,14 @@ import {
   smsAcademicYears,
   smsClasses,
   smsGrades,
+  smsGuardians,
+  smsStudentGuardians,
+  smsStudents,
   smsSubjects,
+  smsTeacherAssignments,
   smsTerms
 } from './database/schema'
-import { canUseSms, requireSmsOrganization, type SmsActor } from './context'
+import { canUseSms, isSmsAdmin, requireSmsOrganization, type SmsActor } from './context'
 
 function requireManage(actor: SmsActor, resource: string): number {
   const organizationId = requireSmsOrganization(actor)
@@ -295,4 +299,123 @@ export async function classInContext(actor: SmsActor, classId: number): Promise<
     throw createError({ statusCode: 400, statusMessage: 'Bad Request', message: 'classId does not belong to the current organization' })
   }
   return row
+}
+
+// ---------------------------------------------------------------------------
+// Read helpers for pages and capabilities (org + role scoped)
+// ---------------------------------------------------------------------------
+
+function limitValue(value: number | undefined, fallback = 100): number {
+  const limit = Number(value ?? fallback)
+  if (!Number.isFinite(limit)) return fallback
+  return Math.min(Math.max(Math.floor(limit), 1), 200)
+}
+
+export async function listAcademicYears(actor: SmsActor, limit?: number) {
+  const organizationId = requireSmsOrganization(actor)
+  return await db.select({
+    id: smsAcademicYears.id,
+    name: smsAcademicYears.name,
+    startDate: smsAcademicYears.startDate,
+    endDate: smsAcademicYears.endDate,
+    isCurrent: smsAcademicYears.isCurrent
+  }).from(smsAcademicYears)
+    .where(and(
+      eq(smsAcademicYears.organizationId, organizationId),
+      isNull(smsAcademicYears.deletedAt)
+    ))
+    .orderBy(desc(smsAcademicYears.isCurrent), desc(smsAcademicYears.startDate))
+    .limit(limitValue(limit))
+}
+
+export async function listTerms(actor: SmsActor, academicYearId?: number | null, limit?: number) {
+  const organizationId = requireSmsOrganization(actor)
+  const conditions = [eq(smsTerms.organizationId, organizationId)]
+  if (academicYearId) conditions.push(eq(smsTerms.academicYearId, academicYearId))
+  return await db.select({
+    id: smsTerms.id,
+    academicYearId: smsTerms.academicYearId,
+    name: smsTerms.name,
+    startDate: smsTerms.startDate,
+    endDate: smsTerms.endDate
+  }).from(smsTerms)
+    .where(and(...conditions))
+    .orderBy(asc(smsTerms.name))
+    .limit(limitValue(limit))
+}
+
+export async function listSubjects(actor: SmsActor, query?: string, limit?: number) {
+  const organizationId = requireSmsOrganization(actor)
+  const conditions = [
+    eq(smsSubjects.organizationId, organizationId),
+    isNull(smsSubjects.deletedAt)
+  ]
+  const clean = query?.trim()
+  if (clean) {
+    conditions.push(or(ilike(smsSubjects.name, `%${clean}%`), ilike(smsSubjects.code, `%${clean}%`))!)
+  }
+  return await db.select({
+    id: smsSubjects.id,
+    code: smsSubjects.code,
+    name: smsSubjects.name
+  }).from(smsSubjects)
+    .where(and(...conditions))
+    .orderBy(asc(smsSubjects.name))
+    .limit(limitValue(limit))
+}
+
+/** Classes visible to the actor (admin: all; teacher: assigned; student/guardian: related). */
+export async function listClasses(actor: SmsActor, options: { query?: string, limit?: number } = {}) {
+  const organizationId = requireSmsOrganization(actor)
+  const conditions = [
+    eq(smsClasses.organizationId, organizationId),
+    isNull(smsClasses.deletedAt)
+  ]
+
+  if (!isSmsAdmin(actor)) {
+    const scoped: number[] = []
+    if (actor.roleName === 'teacher') {
+      const rows = await db.select({ classId: smsTeacherAssignments.classId })
+        .from(smsTeacherAssignments)
+        .where(and(
+          eq(smsTeacherAssignments.organizationId, organizationId),
+          eq(smsTeacherAssignments.teacherUserId, actor.userId),
+          isNull(smsTeacherAssignments.deletedAt)
+        ))
+      scoped.push(...rows.map(row => row.classId))
+    } else if (actor.roleName === 'student') {
+      const [row] = await db.select({ classId: smsStudents.classId })
+        .from(smsStudents)
+        .where(and(
+          eq(smsStudents.organizationId, organizationId),
+          eq(smsStudents.userId, actor.userId)
+        ))
+        .limit(1)
+      if (row?.classId) scoped.push(row.classId)
+    } else if (actor.roleName === 'guardian') {
+      const rows = await db.select({ classId: smsStudents.classId })
+        .from(smsStudentGuardians)
+        .innerJoin(smsStudents, eq(smsStudents.id, smsStudentGuardians.studentId))
+        .innerJoin(smsGuardians, eq(smsGuardians.id, smsStudentGuardians.guardianId))
+        .where(and(
+          eq(smsStudentGuardians.organizationId, organizationId),
+          eq(smsGuardians.userId, actor.userId)
+        ))
+      scoped.push(...rows.map(row => row.classId).filter((id): id is number => id !== null))
+    }
+    conditions.push(scoped.length ? inArray(smsClasses.id, scoped) : eq(smsClasses.id, -1))
+  }
+
+  const clean = options.query?.trim()
+  if (clean) conditions.push(ilike(smsClasses.name, `%${clean}%`))
+
+  return await db.select({
+    id: smsClasses.id,
+    name: smsClasses.name,
+    academicYearId: smsClasses.academicYearId,
+    gradeId: smsClasses.gradeId
+  }).from(smsClasses)
+    .where(and(...conditions))
+    .orderBy(asc(smsClasses.name))
+    .limit(limitValue(options.limit))
 }

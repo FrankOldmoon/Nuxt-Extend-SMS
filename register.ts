@@ -4,15 +4,22 @@ import type {
   ModuleApiRouter,
   TableFeatures,
   TableMeta,
-  ToolDefinition,
   ToolRegistry,
   UiDefinition,
   UiRegistry
 } from '../../server/sdk'
-import { registerDashboardTable, registerDataScopeResolver, registerTableValidator } from '../../server/sdk'
+import {
+  registerCapabilities,
+  registerChatPrompt,
+  registerDashboardTable,
+  registerDataScopeResolver,
+  registerTableValidator
+} from '../../server/sdk'
 import { and, eq, inArray } from 'drizzle-orm'
 import { db } from '../../server/database'
 import { canUseSms, type SmsActor } from './server/context'
+import { smsCapabilities } from './server/capabilities'
+import { buildSmsChatPrompt } from './server/chatPrompt'
 import {
   assertClassInContext,
   assignedClassIds,
@@ -596,27 +603,6 @@ const smsApis: ModuleApiDefinition<SmsActor>[] = [
   }
 ]
 
-const smsTools: ToolDefinition<SmsActor>[] = [
-  {
-    id: 'sms.students.search',
-    moduleId: 'sms',
-    description: 'Search students visible to the current teacher or organization admin',
-    schema: isRecord,
-    inputJsonSchema: {
-      type: 'object',
-      properties: { query: { type: 'string', description: 'Name or student number fragment' } },
-      additionalProperties: false
-    },
-    operation: 'query',
-    permission: 'sms:read',
-    approval: 'none',
-    authorize: actor => canUseSms(actor, 'read'),
-    execute: (input, actor) => searchStudents(actor, {
-      query: isRecord(input) && typeof input.query === 'string' ? input.query : undefined
-    })
-  }
-]
-
 const smsUi: UiDefinition<{ rows?: unknown[], query?: string }, Record<string, unknown>> = {
   id: 'sms.student-table',
   moduleId: 'sms',
@@ -635,7 +621,9 @@ export interface SmsRegistries {
 export function registerSmsModule(registries: SmsRegistries): void {
   registerSmsDashboardTables()
   for (const api of smsApis) registries.api.register(api)
-  for (const tool of smsTools) registries.tools.register(tool)
+  // One capability set drives Chat, Apps and Agents (see server/capabilities.ts).
+  registerCapabilities(registries.tools, 'sms', smsCapabilities)
+  registerChatPrompt('sms', buildSmsChatPrompt)
   registries.ui.register({
     id: smsUi.id,
     version: smsUi.version,

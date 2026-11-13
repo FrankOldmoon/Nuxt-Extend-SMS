@@ -16,6 +16,39 @@ standalone application: it mounts into `Nuxt-Admin` and runs inside the host Nit
 - Tables use the `sms_` prefix and are created by module-owned migrations
 - Uninstalling the module never drops business data
 
+### Chat workbench (`/sms`)
+
+The module turns `/sms` into a ChatGPT-style workbench sharing one capability set
+with the traditional Apps pages:
+
+```text
+/sms
+ ├─ Chat        conversations + messages + tool cards + form/approval cards
+ ├─ Apps        links to the generic CRUD pages (/dashboard/<table>)
+ └─ Agents      prompt templates (new enrollment / class students / teacher courses)
+```
+
+- **Read capabilities** (`sms.students.search`, `sms.classes.list`, ...) execute
+  directly and render compact result cards.
+- **Write capabilities** (`sms.students.create/update/delete`,
+  `sms.enrollments.create/withdraw`, `sms.teachers.assign`, `sms.guardians.link`)
+  return a server-defined form plus a preview. Nothing is written until the user
+  submits the draft (high-risk deletes use an approval card instead).
+- The chat calls `POST /api/agent/chat`; drafts go through
+  `POST /api/agent/drafts/:id/submit`, approvals through
+  `POST /api/agent/approvals/:batchId`. Conversations are persisted in
+  `agent_conversations` / `agent_messages` / `agent_drafts`.
+- The model only ever sees capabilities allowed by the caller's server-resolved
+  permissions; organization/tenant/role fields cannot be supplied by the model or
+  the browser.
+
+Enable the workbench together with the host:
+
+```bash
+ENABLED_MODULES=example,sms pnpm dev
+# http://localhost:3000/sms/chat
+```
+
 ---
 
 ## Run with the Nuxt-Admin host

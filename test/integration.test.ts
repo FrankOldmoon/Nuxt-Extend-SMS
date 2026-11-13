@@ -235,7 +235,7 @@ describe('SMS demo module (database)', () => {
     expect(created.tenantId).toBe(tenantId)
 
     const audit = await pool.query(
-      `SELECT module_id, source FROM audit_logs WHERE record_id = $1 AND action = 'student.create'`,
+      `SELECT module_id, source FROM audit_logs WHERE record_id = $1 AND action = 'student.create' ORDER BY id DESC LIMIT 1`,
       [created.id]
     )
     expect(audit.rows[0]).toEqual({ module_id: 'sms', source: 'sms-api' })

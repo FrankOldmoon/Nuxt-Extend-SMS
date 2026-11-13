@@ -110,9 +110,8 @@ export async function assertClassInContext(actor: SmsActor, classId: number) {
  * page. Row scope comes from TeacherAssignment, never from request input.
  */
 export async function searchStudents(actor: SmsActor, options: StudentSearchOptions = {}) {
-  const organizationId = requireSmsOrganization(actor)
   const limit = Math.min(Math.max(options.limit ?? 50, 1), 200)
-  const conditions = [eq(smsStudents.organizationId, organizationId), isNull(smsStudents.deletedAt)]
+  const conditions = await studentScopeConditions(actor)
 
   const query = options.query?.trim()
   if (query) {
@@ -120,15 +119,6 @@ export async function searchStudents(actor: SmsActor, options: StudentSearchOpti
       ilike(smsStudents.name, `%${query}%`),
       ilike(smsStudents.studentNo, `%${query}%`)
     )!)
-  }
-  if (!isSmsAdmin(actor)) {
-    if (actor.roleName === 'student') {
-      conditions.push(eq(smsStudents.userId, actor.userId))
-    } else if (actor.roleName === 'guardian') {
-      conditions.push(inArray(smsStudents.id, await guardianStudentIds(actor)))
-    } else {
-      conditions.push(inArray(smsStudents.classId, await assignedClassIds(actor)))
-    }
   }
 
   return await db.select({
@@ -142,4 +132,153 @@ export async function searchStudents(actor: SmsActor, options: StudentSearchOpti
     .where(and(...conditions))
     .orderBy(asc(smsStudents.name))
     .limit(limit)
+}
+
+/** Row-level visibility for students (org + role scope). */
+async function studentScopeConditions(actor: SmsActor) {
+  const organizationId = requireSmsOrganization(actor)
+  const conditions = [eq(smsStudents.organizationId, organizationId), isNull(smsStudents.deletedAt)]
+  if (!isSmsAdmin(actor)) {
+    if (actor.roleName === 'student') {
+      conditions.push(eq(smsStudents.userId, actor.userId))
+    } else if (actor.roleName === 'guardian') {
+      const studentIds = await guardianStudentIds(actor)
+      conditions.push(studentIds.length ? inArray(smsStudents.id, studentIds) : eq(smsStudents.id, -1))
+    } else {
+      const classIds = await assignedClassIds(actor)
+      conditions.push(classIds.length ? inArray(smsStudents.classId, classIds) : eq(smsStudents.classId, -1))
+    }
+  }
+  return conditions
+}
+
+/** One student visible to the actor; 404 otherwise (no existence leak). */
+export async function getStudent(actor: SmsActor, studentId: number) {
+  const conditions = await studentScopeConditions(actor)
+  conditions.push(eq(smsStudents.id, studentId))
+  const [row] = await db.select({
+    id: smsStudents.id,
+    name: smsStudents.name,
+    studentNo: smsStudents.studentNo,
+    classId: smsStudents.classId,
+    userId: smsStudents.userId,
+    organizationId: smsStudents.organizationId
+  })
+    .from(smsStudents)
+    .where(and(...conditions))
+    .limit(1)
+  if (!row) {
+    throw createError({ statusCode: 404, message: 'Student not found' })
+  }
+  return row
+}
+
+export interface UpdateStudentInput {
+  studentId?: unknown
+  name?: unknown
+  studentNo?: unknown
+  classId?: unknown
+}
+
+/**
+ * Update a student. Class ownership is validated like creation; teachers may
+ * only move students between their assigned classes.
+ */
+export async function updateStudent(actor: SmsActor, input: UpdateStudentInput) {
+  const organizationId = requireSmsOrganization(actor)
+  if (!canUseSms(actor, 'update') && !canUseSms(actor, 'create')) {
+    throw createError({ statusCode: 403, statusMessage: 'Forbidden', message: 'No permission to update students' })
+  }
+  const studentId = Number(input.studentId)
+  if (!Number.isSafeInteger(studentId) || studentId <= 0) {
+    throw createError({ statusCode: 400, statusMessage: 'Bad Request', message: 'studentId must be a positive integer' })
+  }
+  const current = await getStudent(actor, studentId)
+
+  const patch: { name?: string, studentNo?: string, classId?: number | null } = {}
+  if (input.name !== undefined) {
+    const name = typeof input.name === 'string' ? input.name.trim() : ''
+    if (!name) throw createError({ statusCode: 400, statusMessage: 'Bad Request', message: 'name must not be empty' })
+    patch.name = name
+  }
+  if (input.studentNo !== undefined) {
+    const studentNo = typeof input.studentNo === 'string' ? input.studentNo.trim() : ''
+    if (!studentNo) throw createError({ statusCode: 400, statusMessage: 'Bad Request', message: 'studentNo must not be empty' })
+    patch.studentNo = studentNo
+  }
+  if (input.classId !== undefined) {
+    if (input.classId === null || input.classId === '') {
+      patch.classId = null
+    } else {
+      const classId = Number(input.classId)
+      if (!Number.isSafeInteger(classId) || classId <= 0) {
+        throw createError({ statusCode: 400, statusMessage: 'Bad Request', message: 'classId must be a positive integer' })
+      }
+      await assertClassInContext(actor, classId)
+      if (!isSmsAdmin(actor)) {
+        const assigned = await assignedClassIds(actor)
+        if (!assigned.includes(classId)) {
+          throw createError({ statusCode: 403, statusMessage: 'Forbidden', message: 'No access to the requested class' })
+        }
+      }
+      patch.classId = classId
+    }
+  }
+  if (Object.keys(patch).length === 0) {
+    throw createError({ statusCode: 400, statusMessage: 'Bad Request', message: 'No fields to update' })
+  }
+
+  return await db.transaction(async (tx) => {
+    const [row] = await tx.update(smsStudents)
+      .set(patch)
+      .where(and(eq(smsStudents.id, studentId), eq(smsStudents.organizationId, organizationId)))
+      .returning()
+    if (!row) throw createError({ statusCode: 404, message: 'Student not found' })
+    await writeAudit(tx, {
+      actorUserId: actor.userId,
+      tenantId: actor.tenantId ?? undefined,
+      organizationId,
+      moduleId: 'sms',
+      action: 'student.update',
+      resource: 'students',
+      recordId: row.id,
+      before: current,
+      after: row,
+      source: 'sms-service'
+    })
+    return row
+  })
+}
+
+/** Soft delete a student (high risk; chat requires explicit approval). */
+export async function softDeleteStudent(actor: SmsActor, studentId: number) {
+  const organizationId = requireSmsOrganization(actor)
+  if (!canUseSms(actor, 'delete')) {
+    throw createError({ statusCode: 403, statusMessage: 'Forbidden', message: 'No permission to delete students' })
+  }
+  const current = await getStudent(actor, studentId)
+  return await db.transaction(async (tx) => {
+    const [row] = await tx.update(smsStudents)
+      .set({ deletedAt: new Date() })
+      .where(and(
+        eq(smsStudents.id, studentId),
+        eq(smsStudents.organizationId, organizationId),
+        isNull(smsStudents.deletedAt)
+      ))
+      .returning()
+    if (!row) throw createError({ statusCode: 404, message: 'Student not found' })
+    await writeAudit(tx, {
+      actorUserId: actor.userId,
+      tenantId: actor.tenantId ?? undefined,
+      organizationId,
+      moduleId: 'sms',
+      action: 'student.delete',
+      resource: 'students',
+      recordId: row.id,
+      before: current,
+      after: row,
+      source: 'sms-service'
+    })
+    return row
+  })
 }
