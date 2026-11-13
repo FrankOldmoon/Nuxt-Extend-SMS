@@ -31,6 +31,7 @@ import {
   enrollStudent,
   findEnrollment,
   listEnrollments,
+  transferStudent,
   withdrawEnrollment
 } from './enrollment'
 import { assertGuardianInContext, linkGuardian, listGuardians } from './guardians'
@@ -577,6 +578,89 @@ const enrollmentWithdraw: Capability = {
   }
 }
 
+const enrollmentTransfer: Capability = {
+  id: 'sms.enrollments.transfer',
+  title: '学生转班',
+  description: '把学生的进行中选课转入目标班级，原选课记录保留为已退课',
+  resource: 'enrollments',
+  moduleId: 'sms',
+  operation: 'command',
+  riskLevel: 'medium',
+  permission: 'sms.enrollments.create',
+  approval: 'confirm',
+  timeoutMs: TIMEOUT_MS,
+  rateLimit: { max: 20, windowMs: 60_000 },
+  schema: isRecord,
+  inputJsonSchema: {
+    type: 'object',
+    properties: {
+      studentId: { type: 'integer', minimum: 1 },
+      toClassId: { type: 'integer', minimum: 1 },
+      academicYearId: { type: 'integer', minimum: 1 },
+      termId: { type: 'integer', minimum: 1 },
+      reason: { type: 'string' }
+    },
+    required: ['studentId', 'toClassId'],
+    additionalProperties: false
+  },
+  form: {
+    fields: [
+      { key: 'studentId', label: '学生', type: 'select', required: true },
+      { key: 'toClassId', label: '转入班级', type: 'select', required: true },
+      { key: 'academicYearId', label: '学年', type: 'select', help: '默认使用目标班级所属学年' },
+      { key: 'termId', label: '学期', type: 'select' },
+      { key: 'reason', label: '转班原因', type: 'textarea', placeholder: '可选，最多 200 字' }
+    ],
+    submitLabel: '确认转班',
+    layout: 'two-column'
+  },
+  authorize: actor => write(actor, 'create', 'enrollments'),
+  preview: async (input, actor): Promise<PreviewResult> => {
+    const args = isRecord(input) ? input : {}
+    const studentId = positiveId(args.studentId, 'studentId')
+    const toClassId = positiveId(args.toClassId, 'toClassId')
+    const student = await getStudent(actor, studentId)
+    const targetClass = await classInContext(actor, toClassId)
+    const [classes, students, active, years] = await Promise.all([
+      listClasses(actor, { limit: 100 }),
+      searchStudents(actor, { limit: 100 }),
+      listEnrollments(actor, { studentId, status: 'active', limit: 20 }),
+      listAcademicYears(actor)
+    ])
+    const academicYearId = optionalId(args.academicYearId) ?? targetClass.academicYearId
+    if (academicYearId) await assertAcademicYearInContext(actor, academicYearId)
+    const termId = optionalId(args.termId)
+    if (termId) await assertTermInContext(actor, termId, academicYearId ?? undefined)
+    const terms = academicYearId ? await listTerms(actor, academicYearId) : []
+    const fromClassName = student.classId
+      ? classes.find(row => row.id === student.classId)?.name ?? `#${student.classId}`
+      : null
+    const toClassName = classes.find(row => row.id === toClassId)?.name ?? `#${toClassId}`
+
+    return {
+      summary: `将学生「${student.name}」${fromClassName ? `从「${fromClassName}」` : ''}转入「${toClassName}」。`,
+      details: { studentId, fromClassId: student.classId, toClassId, academicYearId, termId },
+      impact: Math.max(active.length, 1),
+      warnings: active.length === 0
+        ? ['该学生当前没有进行中的选课，提交后将直接建立新选课。']
+        : undefined,
+      fieldOptions: {
+        studentId: students.map(row => ({ label: `${row.name}（${row.studentNo}）`, value: row.id })),
+        toClassId: classes.map(row => ({ label: row.name, value: row.id })),
+        academicYearId: years.map(row => ({ label: row.name, value: row.id })),
+        termId: terms.map(row => ({ label: row.name, value: row.id }))
+      }
+    }
+  },
+  execute: (input, actor) => transferStudent(actor, input as Record<string, unknown>),
+  summarize: (value) => {
+    const row = isRecord(value) ? value : {}
+    const enrollment = isRecord(row.enrollment) ? row.enrollment : {}
+    const withdrawn = typeof row.withdrawn === 'number' ? row.withdrawn : 0
+    return `转班完成（新选课 #${enrollment.id ?? '-'}，原选课 ${withdrawn} 条转为已退课）`
+  }
+}
+
 const teacherAssign: Capability = {
   id: 'sms.teachers.assign',
   title: '分配任课',
@@ -730,6 +814,7 @@ export const smsCapabilities: Capability[] = [
   studentDelete,
   enrollmentCreate,
   enrollmentWithdraw,
+  enrollmentTransfer,
   teacherAssign,
   guardianLink
 ]

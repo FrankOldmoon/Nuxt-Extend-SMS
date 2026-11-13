@@ -11,6 +11,8 @@ standalone application: it mounts into `Nuxt-Admin` and runs inside the host Nit
 - Academic years, terms, grades and subjects
 - Teachers, classes, students and guardians
 - Enrollments with history (withdrawing keeps the old row)
+- Student transfer between classes: the previous active enrollment becomes
+  `withdrawn`, the new one is `active`, and the full history is preserved
 - Role-aware scopes: admin / teacher / student / guardian
 - Canonical permissions (`sms.<resource>.<action>`), organization isolation and audit attribution
 - Tables use the `sms_` prefix and are created by module-owned migrations
@@ -31,7 +33,8 @@ with the traditional Apps pages:
 - **Read capabilities** (`sms.students.search`, `sms.classes.list`, ...) execute
   directly and render compact result cards.
 - **Write capabilities** (`sms.students.create/update/delete`,
-  `sms.enrollments.create/withdraw`, `sms.teachers.assign`, `sms.guardians.link`)
+  `sms.enrollments.create/withdraw/transfer`, `sms.teachers.assign`,
+  `sms.guardians.link`)
   return a server-defined form plus a preview. Nothing is written until the user
   submits the draft (high-risk deletes use an approval card instead).
 - The chat calls `POST /api/agent/chat`; drafts go through

@@ -18,6 +18,7 @@ describe('SMS capabilities', () => {
       'sms.classes.list',
       'sms.enrollments.create',
       'sms.enrollments.list',
+      'sms.enrollments.transfer',
       'sms.enrollments.withdraw',
       'sms.guardians.link',
       'sms.guardians.list',
@@ -33,7 +34,7 @@ describe('SMS capabilities', () => {
 
   it('requires a preview and a form for every write capability', () => {
     const writes = smsCapabilities.filter(capability => capability.operation === 'command')
-    expect(writes).toHaveLength(7)
+    expect(writes).toHaveLength(8)
     for (const capability of writes) {
       expect(capability.preview, capability.id).toBeTypeOf('function')
       expect(capability.riskLevel, capability.id).toMatch(/medium|high/)

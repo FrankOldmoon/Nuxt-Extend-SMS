@@ -18,7 +18,7 @@ import {
   createTerm
 } from '../server/academics'
 import { assignTeacher, createTeacher } from '../server/teachers'
-import { enrollStudent, withdrawEnrollment } from '../server/enrollment'
+import { enrollStudent, transferStudent, withdrawEnrollment } from '../server/enrollment'
 import { createGuardian, linkGuardian } from '../server/guardians'
 import type { SmsActor } from '../server/context'
 
@@ -176,6 +176,26 @@ describe('SMS academic domain (database)', () => {
     expect(term.rows[0].academic_year_id).toBe(academicYearId)
   })
 
+  it('keeps module migrations idempotent and records applied ids', async () => {
+    await applyModuleMigrations(pool, [smsModule])
+
+    const applied = await pool.query(
+      `SELECT count(*)::int AS count FROM "__module_migrations" WHERE id LIKE 'sms:%'`
+    )
+    expect(applied.rows[0].count).toBeGreaterThanOrEqual(4)
+
+    const columns = await pool.query(
+      `SELECT column_name FROM information_schema.columns WHERE table_name = 'sms_enrollments'`
+    )
+    expect(columns.rows.map(row => row.column_name)).toEqual(expect.arrayContaining([
+      'student_id',
+      'class_id',
+      'academic_year_id',
+      'status',
+      'ended_at'
+    ]))
+  })
+
   it('rejects cross-organization academic references', async () => {
     await expect(createClass(admin, { name: 'Bad Class', academicYearId, gradeId: foreignGradeId }))
       .rejects.toMatchObject({ statusCode: 400 })
@@ -218,6 +238,57 @@ describe('SMS academic domain (database)', () => {
     // A new enrollment in the same academic year is allowed after withdrawal.
     const again = await enrollStudent(admin, { studentId, classId, academicYearId })
     expect(again.status).toBe('active')
+  })
+
+  it('transfers a student between classes and preserves enrollment history', async () => {
+    const target = await createClass(admin, {
+      name: `Transfer Target ${suffix}`,
+      academicYearId,
+      gradeId
+    })
+
+    const before = await pool.query(
+      `SELECT id, class_id FROM sms_enrollments WHERE student_id = $1 AND status = 'active'`,
+      [studentId]
+    )
+    expect(before.rows).toHaveLength(1)
+
+    const result = await transferStudent(admin, {
+      studentId,
+      toClassId: target.id,
+      reason: '家庭搬迁'
+    })
+    expect(result.withdrawn).toBe(1)
+    expect(result.enrollment.classId).toBe(target.id)
+    expect(result.enrollment.status).toBe('active')
+
+    const history = await pool.query(
+      `SELECT id, class_id, status, ended_at FROM sms_enrollments WHERE student_id = $1 ORDER BY id`,
+      [studentId]
+    )
+    const oldRow = history.rows.find(row => row.id === before.rows[0].id)
+    expect(oldRow.status).toBe('withdrawn')
+    expect(oldRow.ended_at).toBeTruthy()
+
+    const student = await pool.query(
+      `SELECT class_id FROM sms_students WHERE id = $1`,
+      [studentId]
+    )
+    expect(student.rows[0].class_id).toBe(target.id)
+
+    const audit = await pool.query(
+      `SELECT action, before, after FROM audit_logs WHERE record_id = $1 AND action = 'student.transfer' ORDER BY id DESC LIMIT 1`,
+      [String(result.enrollment.id)]
+    )
+    expect(audit.rows[0]?.action).toBe('student.transfer')
+    expect(audit.rows[0]?.after?.reason).toBe('家庭搬迁')
+
+    // Repeating the same transfer is rejected instead of duplicating history.
+    await expect(transferStudent(admin, { studentId, toClassId: target.id }))
+      .rejects.toMatchObject({ statusCode: 409 })
+
+    // Restore the original class so later role-scope assertions still apply.
+    await transferStudent(admin, { studentId, toClassId: classId })
   })
 
   it('records audit history for sensitive SMS changes', async () => {

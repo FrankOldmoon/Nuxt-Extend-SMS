@@ -151,10 +151,125 @@ export async function withdrawEnrollment(actor: SmsActor, enrollmentId: number) 
   })
 }
 
+export interface TransferStudentInput {
+  studentId?: unknown
+  toClassId?: unknown
+  academicYearId?: unknown
+  termId?: unknown
+  reason?: unknown
+}
+
+/**
+ * Transfer a student to another class. The previous active enrollment is kept
+ * as `withdrawn` (history is never deleted) and a new `active` row is created
+ * atomically with the denormalised `students.classId` update.
+ */
+export async function transferStudent(actor: SmsActor, input: TransferStudentInput) {
+  const organizationId = requireManage(actor, 'enrollments')
+  const studentId = positiveId(input.studentId, 'studentId')
+  const toClassId = positiveId(input.toClassId, 'toClassId')
+  await assertStudentInContext(actor, studentId)
+  const targetClass = await classInContext(actor, toClassId)
+
+  let academicYearId = targetClass.academicYearId
+  if (input.academicYearId !== undefined && input.academicYearId !== null && input.academicYearId !== '') {
+    academicYearId = positiveId(input.academicYearId, 'academicYearId')
+    await assertAcademicYearInContext(actor, academicYearId)
+  }
+  if (!academicYearId) {
+    throw createError({ statusCode: 400, statusMessage: 'Bad Request', message: 'The target class has no academic year; provide academicYearId' })
+  }
+
+  let termId: number | null = null
+  if (input.termId !== undefined && input.termId !== null && input.termId !== '') {
+    termId = positiveId(input.termId, 'termId')
+    await assertTermInContext(actor, termId, academicYearId)
+  }
+  const reason = typeof input.reason === 'string' && input.reason.trim()
+    ? input.reason.trim().slice(0, 200)
+    : null
+
+  return await db.transaction(async (tx) => {
+    const [student] = await tx.select({ classId: smsStudents.classId })
+      .from(smsStudents)
+      .where(and(
+        eq(smsStudents.id, studentId),
+        eq(smsStudents.organizationId, organizationId)
+      ))
+      .limit(1)
+    if (!student) {
+      throw createError({ statusCode: 404, message: 'Student not found' })
+    }
+
+    const active = await tx.select({
+      id: smsEnrollments.id,
+      classId: smsEnrollments.classId,
+      academicYearId: smsEnrollments.academicYearId
+    }).from(smsEnrollments)
+      .where(and(
+        eq(smsEnrollments.organizationId, organizationId),
+        eq(smsEnrollments.studentId, studentId),
+        eq(smsEnrollments.status, 'active')
+      ))
+    if (active.some(row => row.classId === toClassId && row.academicYearId === academicYearId)) {
+      throw createError({ statusCode: 409, statusMessage: 'Conflict', message: 'Student is already enrolled in the target class for this academic year' })
+    }
+
+    const endedAt = new Date()
+    for (const row of active) {
+      await tx.update(smsEnrollments)
+        .set({ status: 'withdrawn', endedAt })
+        .where(eq(smsEnrollments.id, row.id))
+    }
+
+    const [created] = await tx.insert(smsEnrollments).values({
+      organizationId,
+      tenantId: actor.tenantId ?? null,
+      studentId,
+      classId: toClassId,
+      academicYearId,
+      termId,
+      status: 'active'
+    }).returning()
+    if (!created) throw createError({ statusCode: 500, message: 'Failed to create transfer enrollment' })
+
+    await tx.update(smsStudents)
+      .set({ classId: toClassId })
+      .where(and(
+        eq(smsStudents.id, studentId),
+        eq(smsStudents.organizationId, organizationId)
+      ))
+
+    await writeAudit(tx, {
+      actorUserId: actor.userId,
+      tenantId: actor.tenantId ?? undefined,
+      organizationId,
+      moduleId: 'sms',
+      action: 'student.transfer',
+      resource: 'enrollments',
+      recordId: created.id,
+      before: {
+        studentClassId: student.classId,
+        withdrawn: active
+      },
+      after: {
+        studentClassId: toClassId,
+        enrollmentId: created.id,
+        classId: toClassId,
+        academicYearId,
+        termId,
+        reason
+      },
+      source: 'sms-service'
+    })
+
+    return { enrollment: created, withdrawn: active.length }
+  })
+}
+
 // ---------------------------------------------------------------------------
 // Read helpers for pages and capabilities
 // ---------------------------------------------------------------------------
-
 async function enrollmentScopeConditions(actor: SmsActor) {
   const organizationId = requireSmsOrganization(actor)
   const conditions = [eq(smsEnrollments.organizationId, organizationId)]

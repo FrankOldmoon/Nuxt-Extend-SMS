@@ -63,6 +63,7 @@ export const smsModule: ModuleDefinition = {
     'sms.students.delete',
     'sms.enrollments.create',
     'sms.enrollments.withdraw',
+    'sms.enrollments.transfer',
     'sms.teachers.assign',
     'sms.guardians.link'
   ],

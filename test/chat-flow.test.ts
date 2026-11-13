@@ -14,8 +14,10 @@ import { moduleTools } from '../../../server/utils/moduleRuntime'
 import { finalizeChatResult } from '../../../server/utils/agentChatRuntime'
 import { submitAgentDraft } from '../../../server/utils/agentDraftService'
 import {
+  createAgentApproval,
   createAgentConversation,
   createAgentDraft,
+  decideAgentApproval,
   startAgentExecution
 } from '../../../server/utils/agentStore'
 import { smsCapabilities } from '../server/capabilities'
@@ -94,6 +96,7 @@ describe('SMS chat flow (database)', () => {
       )
       await pool.query('DELETE FROM agent_drafts WHERE organization_id = $1', [organizationId])
       await pool.query('DELETE FROM agent_conversations WHERE organization_id = $1', [organizationId])
+      await pool.query('DELETE FROM agent_approvals WHERE user_id IN ($1, $2)', [userId, teacherId])
       await pool.query('DELETE FROM agent_executions WHERE user_id IN ($1, $2)', [userId, teacherId])
       await pool.query('DELETE FROM sms_students WHERE organization_id = $1', [organizationId])
       await pool.query('DELETE FROM sms_classes WHERE organization_id = $1', [organizationId])
@@ -237,5 +240,77 @@ describe('SMS chat flow (database)', () => {
       recordActor
     })
     expect(retried.status).toBe('completed')
+  })
+
+  it('ignores organization/tenant/role fields supplied in a draft payload', async () => {
+    const { response } = await openForm('FLOW-SPOOF')
+    const ui = response.ui as ChatFormUi
+
+    await submitAgentDraft({
+      draftId: ui.draftId,
+      payload: {
+        name: 'Spoof Student',
+        studentNo: 'FLOW-SPOOF',
+        organizationId: otherOrganizationId,
+        tenantId: 999_999,
+        roleName: 'admin'
+      },
+      actor: admin,
+      recordActor
+    })
+
+    const row = await pool.query(
+      `SELECT organization_id, tenant_id FROM sms_students WHERE student_no = 'FLOW-SPOOF'`
+    )
+    expect(row.rows[0]).toEqual({ organization_id: organizationId, tenant_id: tenantId })
+  })
+
+  it('refuses expired drafts and closes them', async () => {
+    const { response } = await openForm('FLOW-EXPIRED')
+    const ui = response.ui as ChatFormUi
+    await pool.query(
+      `UPDATE agent_drafts SET expires_at = now() - interval '1 minute' WHERE id = $1`,
+      [ui.draftId]
+    )
+
+    await expect(submitAgentDraft({
+      draftId: ui.draftId,
+      payload: { name: 'Expired', studentNo: 'FLOW-EXPIRED' },
+      actor: admin,
+      recordActor
+    })).rejects.toMatchObject({ statusCode: 410 })
+
+    const draft = await pool.query('SELECT status FROM agent_drafts WHERE id = $1', [ui.draftId])
+    expect(draft.rows[0].status).toBe('cancelled')
+  })
+
+  it('rejects approval replay and tampered arguments', async () => {
+    const conversation = await createAgentConversation({ ...recordActor, title: 'approval' })
+    const executionId = await startAgentExecution({
+      ...recordActor,
+      agentId: 'chat-test',
+      metadata: { conversationId: conversation.id }
+    })
+    const calls = [{
+      callId: 'call-approval',
+      toolId: 'sms.students.delete',
+      arguments: { studentId: 1 }
+    }]
+    const batchId = `approval-${suffix}`
+    await createAgentApproval({ batchId, executionId, ...recordActor, calls })
+
+    await decideAgentApproval({ batchId, approved: true, actor: recordActor })
+    await expect(decideAgentApproval({ batchId, approved: true, actor: recordActor }))
+      .rejects.toMatchObject({ statusCode: 409 })
+
+    // Tampering with the stored arguments must invalidate the binding hash.
+    const tamperedBatch = `tampered-${suffix}`
+    await createAgentApproval({ batchId: tamperedBatch, executionId, ...recordActor, calls })
+    await pool.query(
+      `UPDATE agent_approvals SET calls = $2::jsonb WHERE batch_id = $1`,
+      [tamperedBatch, JSON.stringify([{ ...calls[0], arguments: { studentId: 999 } }])]
+    )
+    await expect(decideAgentApproval({ batchId: tamperedBatch, approved: true, actor: recordActor }))
+      .rejects.toMatchObject({ statusCode: 409 })
   })
 })
