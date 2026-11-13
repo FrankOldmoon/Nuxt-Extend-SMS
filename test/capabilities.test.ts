@@ -57,6 +57,24 @@ describe('SMS capabilities', () => {
     }
   })
 
+  it('keeps the module manifest in sync with the capability set', async () => {
+    const { smsModule } = await import('../module')
+
+    expect([...smsModule.tools].sort()).toEqual(smsCapabilities.map(capability => capability.id).sort())
+
+    for (const permission of smsModule.permissions) {
+      expect(permission, permission).toMatch(/^sms(\.|:|$)/)
+    }
+    for (const table of smsModule.database) {
+      expect(table, table).toMatch(/^sms_/)
+    }
+    for (const route of smsModule.api) {
+      expect(route, route).toMatch(/^(GET|POST|PUT|PATCH|DELETE) \/api\/modules\/sms\//)
+    }
+    expect(smsModule.migrationScope).toBe('global')
+    expect(smsModule.apiVersion).toBe('1')
+  })
+
   it('hides write capabilities from read-only roles', () => {
     const tools = new ToolRegistry<SmsActor>()
     registerCapabilities(tools, 'sms', smsCapabilities)

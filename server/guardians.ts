@@ -1,7 +1,6 @@
 import { and, asc, eq, ilike, inArray, isNull, or } from 'drizzle-orm'
 import { createError } from 'h3'
-import { db } from '../../../server/database'
-import { writeAudit } from '../../../server/sdk'
+import { db, writeAudit } from '../../../server/sdk'
 import {
   smsGuardians,
   smsStudentGuardians,

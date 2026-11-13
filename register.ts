@@ -9,6 +9,7 @@ import type {
   UiRegistry
 } from '../../server/sdk'
 import {
+  db,
   registerCapabilities,
   registerChatPrompt,
   registerDashboardTable,
@@ -16,7 +17,6 @@ import {
   registerTableValidator
 } from '../../server/sdk'
 import { and, eq, inArray } from 'drizzle-orm'
-import { db } from '../../server/database'
 import { canUseSms, type SmsActor } from './server/context'
 import { smsCapabilities } from './server/capabilities'
 import { buildSmsChatPrompt } from './server/chatPrompt'

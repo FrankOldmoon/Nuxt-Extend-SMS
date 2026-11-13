@@ -1,7 +1,6 @@
 import { and, asc, eq, ilike, isNull, or } from 'drizzle-orm'
 import { createError } from 'h3'
-import { db } from '../../../server/database'
-import { writeAudit } from '../../../server/sdk'
+import { db, writeAudit } from '../../../server/sdk'
 import { smsTeacherAssignments, smsTeachers } from './database/schema'
 import { canUseSms, isSmsAdmin, requireSmsOrganization, type SmsActor } from './context'
 import {

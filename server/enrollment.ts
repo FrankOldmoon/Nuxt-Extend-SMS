@@ -1,7 +1,6 @@
 import { and, asc, desc, eq, inArray } from 'drizzle-orm'
 import { createError } from 'h3'
-import { db } from '../../../server/database'
-import { writeAudit } from '../../../server/sdk'
+import { db, writeAudit } from '../../../server/sdk'
 import {
   smsClasses,
   smsEnrollments,
