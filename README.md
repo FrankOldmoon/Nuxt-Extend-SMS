@@ -1,34 +1,32 @@
-# Nuxt-Extend-SMS — SMS Module / 学校信息模块
+# Nuxt-Extend-SMS — School Information Module
 
-> 本仓库现在托管从主仓库 `Nuxt-Admin` 抽出的 **SMS 模块**（模块 ID：`sms`）。
-> 旧的 SMS 实现仍保留在本仓库的 Git 历史中。
->
-> This repository hosts the **SMS module** (`sms`) extracted from `Nuxt-Admin`.
+> This repository hosts the **SMS module** (`sms`) extracted from the `Nuxt-Admin` host.
 > The previous SMS implementation remains available in this repository's git history.
 
-## 它是什么
+A **Nuxt 4 layer + Module SDK** module for school information management. It is not a
+standalone application: it mounts into `Nuxt-Admin` and runs inside the host Nitro process.
 
-一个**独立的 Nuxt 4 layer + Module SDK 模块**，不能单独运行，必须挂载到主项目 `Nuxt-Admin` 上：
+## Features
 
-- 学年、学期、年级、科目
-- 教师、班级、学生、监护人
-- 选课与退课历史（退课不删除记录）
-- 角色范围：admin / teacher / student / guardian
-- 规范权限 `sms.<resource>.<action>`、组织隔离、审计归属
-
-表前缀为 `sms_`，由模块自己的迁移创建；卸载模块不会删除业务数据。
+- Academic years, terms, grades and subjects
+- Teachers, classes, students and guardians
+- Enrollments with history (withdrawing keeps the old row)
+- Role-aware scopes: admin / teacher / student / guardian
+- Canonical permissions (`sms.<resource>.<action>`), organization isolation and audit attribution
+- Tables use the `sms_` prefix and are created by module-owned migrations
+- Uninstalling the module never drops business data
 
 ---
 
-## 如何基于主仓库运行（完整步骤）
+## Run with the Nuxt-Admin host
 
-### 0. 前置条件
+### 0. Prerequisites
 
 - Node.js 20+
 - pnpm 11
 - PostgreSQL 14+
 
-### 1. 克隆并启动主仓库
+### 1. Clone and prepare the host
 
 ```bash
 git clone https://github.com/FrankOldmoon/Nuxt-Admin.git
@@ -36,25 +34,32 @@ cd Nuxt-Admin
 
 pnpm install
 cp .env.example .env
-# 编辑 .env，至少设置：
+# Edit .env and set at least:
 # DATABASE_URL=postgres://postgres:postgres@localhost:5432/nuxt_ai
 # SESSION_SECRET=<openssl rand -hex 32>
 ```
 
-### 2. 把本仓库克隆到主仓库的 `modules/sms`
+### 2. Clone this repository into `modules/sms`
 
-**目录名必须是 `sms`**，因为模块 ID 是 `sms`，主仓库按 `./modules/<id>` 解析 Nuxt layer：
+The directory name **must be `sms`**, because the module ID is `sms` and the host
+resolves each Nuxt layer as `./modules/<id>`:
 
 ```bash
-# 仍在 Nuxt-Admin 根目录
+# Still in the Nuxt-Admin root
 git clone https://github.com/FrankOldmoon/Nuxt-Extend-SMS.git modules/sms
+
+# The host is a pnpm workspace (pnpm-workspace.yaml covers modules/*).
+# Re-run install so this module becomes a workspace package.
+pnpm install
 ```
 
-不要克隆到主仓库根目录下的 `Nuxt-Extend-SMS/`。模块虽然有自己的 `package.json`（元数据与 `peerDependencies`），但**不需要也不应该在模块目录单独 `pnpm install`**：它作为主项目的 Nuxt layer 运行在主项目进程内。
+Do not clone it to a top-level `Nuxt-Extend-SMS/` directory. Do not run
+`pnpm install` inside `modules/sms`; it is a workspace package and is installed
+by the host.
 
-### 3. 在 `modules.catalog.ts` 注册模块
+### 3. Register the module in `modules.catalog.ts`
 
-主仓库使用**静态 catalog**，克隆代码后必须登记一次：
+The host uses a **static catalog**, so the cloned module must be registered once:
 
 ```ts
 // modules.catalog.ts
@@ -63,70 +68,105 @@ import { smsModule } from './modules/sms/module'
 
 export const MODULE_DEFINITIONS = [exampleModule, smsModule]
 
-// 可选：默认启用（否则用 ENABLED_MODULES 显式指定）
+// Optional: enable it by default (otherwise use ENABLED_MODULES)
 export const DEFAULT_ENABLED_MODULE_IDS = ['example', 'sms']
 ```
 
-如果只改 `ENABLED_MODULES` 而不改 catalog，启动会报：
+If you only set `ENABLED_MODULES` without editing the catalog, startup fails with:
 
 ```text
 Unknown enabled module: sms
 ```
 
-### 4. 执行迁移
+### 4. Run migrations
 
 ```bash
-# 主库 + 模块迁移（推荐发布/首次运行）
+# Base + module migrations (recommended for first run / deployment)
 pnpm db:migrate:release
-
-# 或者在开发模式下直接启动，启动插件会自动执行迁移与 seed
 ```
 
-模块迁移会创建 `sms_*` 表，并把 `module_states` 写成 `migrated`。
+In development, the host boot plugin also applies base, module and blog
+migrations automatically.
 
-### 5. 启动
+Module migrations create the `sms_*` tables and record `module_states = migrated`.
+
+### 5. Start
 
 ```bash
 pnpm dev
 ```
 
-如果没有把 `sms` 放进默认列表：
+If `sms` is not in the default list:
 
 ```bash
 ENABLED_MODULES=example,sms pnpm dev
 ```
 
-### 6. 访问
+### 6. Open
 
-- 学校页面：<http://localhost:3000/sms>
-- 模块管理：<http://localhost:3000/dashboard/modules>
-- 后台首页：<http://localhost:3000/dashboard>
+- School page: <http://localhost:3000/sms>
+- Module management: <http://localhost:3000/dashboard/modules>
+- Dashboard: <http://localhost:3000/dashboard>
 
-默认管理员（由主仓库 seed 创建）：`admin@example.com` / `Admin@123`。
+Default administrator created by the host seed: `admin@example.com` / `Admin@123`.
 
 ---
 
-## 常见问题
+## package.json and dependencies
 
-| 现象 | 原因 | 处理 |
+This module has a `package.json` with metadata and `peerDependencies` (`nuxt`, `vue`).
+The host workspace installs it, but that does **not** make this module a standalone app:
+
+- it imports host contracts from `server/sdk` and host database/runtime services;
+- its pages and Nitro handlers are compiled by the host;
+- it has no own dev/build entry point.
+
+Keep shared runtime dependencies (`nuxt`, `vue`, etc.) in `peerDependencies` to avoid
+duplicate Vue/Nuxt instances. Module-specific dependencies can be declared in
+`dependencies`; the host `pnpm install` installs them through the workspace.
+
+---
+
+## Database note
+
+The module uses the `sms_*` table prefix. If a database previously ran the old SMS
+module, it may already contain `sms_*` tables with a different schema. The new module
+migrations use `CREATE TABLE IF NOT EXISTS`, so they will not alter those tables.
+
+Use one of these options before running this module against such a database:
+
+- use a fresh database;
+- back up and drop/rename the old `sms_*` tables;
+- or ask for a compatibility migration.
+
+---
+
+## Troubleshooting
+
+| Symptom | Cause | Fix |
 | --- | --- | --- |
-| `Unknown enabled module: sms` | 只设置了 `ENABLED_MODULES`，没改 `modules.catalog.ts` | 按第 3 步登记 `smsModule` |
-| `/sms` 404 | layer 未启用或克隆目录名不是 `sms` | 确认 `modules/sms/module.ts` 存在，并检查 `ENABLED_MODULES` |
-| 模块 API 403 | 模块状态不是 `active`，或无组织成员关系/权限 | 在 `/dashboard/modules` 查看状态；确认用户有 active membership |
-| `sms_*` 表不存在 | 模块迁移未执行 | 运行 `pnpm db:migrate:release` 或重启开发服务器 |
-| 修改代码后页面没变 | Nuxt layer 是构建期加载 | 重启 `pnpm dev`；生产需重新 `pnpm build` |
+| `Unknown enabled module: sms` | `ENABLED_MODULES` set without editing `modules.catalog.ts` | Register `smsModule` as shown in step 3 |
+| `/sms` returns 404 | Layer not enabled, or the clone directory is not `modules/sms` | Check `modules/sms/module.ts` and `ENABLED_MODULES` |
+| Module API returns 403 | Module is not `active`, or the user has no organization membership/permission | Check `/dashboard/modules`; verify an active membership |
+| `sms_*` tables are missing | Module migrations have not run | Run `pnpm db:migrate:release` or restart the dev server |
+| Code changes are not visible | Nuxt layers are loaded at build time | Restart `pnpm dev`; rebuild for production |
 
-> 运行期在 `/dashboard/modules` 停用/卸载模块只影响模块 API 与状态，**不会**卸载已编译的 Nuxt 页面；要彻底移除页面需从 `ENABLED_MODULES` 移除并重新构建。
+> Disabling or uninstalling a module at `/dashboard/modules` only affects module APIs
+> and lifecycle state. It does not unload compiled Nuxt pages; remove the module from
+> `ENABLED_MODULES` and rebuild to remove its pages completely.
 
 ---
 
-## 契约与测试
+## Contract and tests
 
-模块只从主仓库的 `server/sdk` 导入平台契约，不得 import `server/core/**` 或 `server/utils/**`。主仓库的 `test/unit/server/core/moduleDecoupling.test.ts` 会检查这个边界。
+The module only imports platform contracts from the host `server/sdk`; it must not
+import `server/core/**` or `server/utils/**`. The host test
+`test/unit/server/core/moduleDecoupling.test.ts` enforces this boundary.
 
-模块测试位于本仓库 `test/`，克隆到 `modules/sms` 后由主仓库的 Vitest 自动包含：
+Module tests live in `test/` and are included by the host Vitest setup once this
+repository is cloned to `modules/sms`:
 
 ```bash
-# 在 Nuxt-Admin 根目录
+# From the Nuxt-Admin root
 pnpm test
 ```
