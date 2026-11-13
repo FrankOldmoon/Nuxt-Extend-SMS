@@ -2,8 +2,8 @@ import { and, eq } from 'drizzle-orm'
 import { createError } from 'h3'
 import { db } from '../../../server/database'
 import { writeAudit } from '../../../server/sdk'
-import { sisTeacherAssignments, sisTeachers } from './database/schema'
-import { canUseSis, requireSisOrganization, type SisActor } from './context'
+import { smsTeacherAssignments, smsTeachers } from './database/schema'
+import { canUseSms, requireSmsOrganization, type SmsActor } from './context'
 import {
   assertAcademicYearInContext,
   assertSubjectInContext,
@@ -11,9 +11,9 @@ import {
   classInContext
 } from './academics'
 
-function requireManage(actor: SisActor, resource: string): number {
-  const organizationId = requireSisOrganization(actor)
-  if (!canUseSis(actor, 'create', resource)) {
+function requireManage(actor: SmsActor, resource: string): number {
+  const organizationId = requireSmsOrganization(actor)
+  if (!canUseSms(actor, 'create', resource)) {
     throw createError({ statusCode: 403, statusMessage: 'Forbidden', message: `No permission to manage ${resource}` })
   }
   return organizationId
@@ -33,14 +33,14 @@ export interface CreateTeacherInput {
   employeeNo?: unknown
 }
 
-export async function createTeacher(actor: SisActor, input: CreateTeacherInput) {
+export async function createTeacher(actor: SmsActor, input: CreateTeacherInput) {
   const organizationId = requireManage(actor, 'teachers')
   const userId = positiveId(input.userId, 'userId')
   const name = typeof input.name === 'string' && input.name.trim() ? input.name.trim() : null
   const employeeNo = typeof input.employeeNo === 'string' && input.employeeNo.trim() ? input.employeeNo.trim() : null
 
   return await db.transaction(async (tx) => {
-    const [row] = await tx.insert(sisTeachers).values({
+    const [row] = await tx.insert(smsTeachers).values({
       organizationId,
       tenantId: actor.tenantId ?? null,
       userId,
@@ -52,26 +52,26 @@ export async function createTeacher(actor: SisActor, input: CreateTeacherInput) 
       actorUserId: actor.userId,
       tenantId: actor.tenantId ?? undefined,
       organizationId,
-      moduleId: 'sis',
+      moduleId: 'sms',
       action: 'teacher.create',
       resource: 'teachers',
       recordId: row.id,
       after: row,
-      source: 'sis-service'
+      source: 'sms-service'
     })
     return row
   })
 }
 
-export async function findTeacherInContext(actor: SisActor, teacherId: number) {
-  const organizationId = requireSisOrganization(actor)
+export async function findTeacherInContext(actor: SmsActor, teacherId: number) {
+  const organizationId = requireSmsOrganization(actor)
   const [row] = await db.select({
-    id: sisTeachers.id,
-    userId: sisTeachers.userId,
-    organizationId: sisTeachers.organizationId
-  }).from(sisTeachers).where(and(
-    eq(sisTeachers.id, teacherId),
-    eq(sisTeachers.organizationId, organizationId)
+    id: smsTeachers.id,
+    userId: smsTeachers.userId,
+    organizationId: smsTeachers.organizationId
+  }).from(smsTeachers).where(and(
+    eq(smsTeachers.id, teacherId),
+    eq(smsTeachers.organizationId, organizationId)
   )).limit(1)
   if (!row) {
     throw createError({ statusCode: 400, statusMessage: 'Bad Request', message: 'teacherId does not belong to the current organization' })
@@ -92,7 +92,7 @@ export interface AssignTeacherInput {
  * Teacher-class(-subject/term) assignment. Every referenced entity must belong
  * to the actor's organization; the academic year defaults to the class year.
  */
-export async function assignTeacher(actor: SisActor, input: AssignTeacherInput) {
+export async function assignTeacher(actor: SmsActor, input: AssignTeacherInput) {
   const organizationId = requireManage(actor, 'teacher-assignments')
   const classId = positiveId(input.classId, 'classId')
   const classRow = await classInContext(actor, classId)
@@ -126,7 +126,7 @@ export async function assignTeacher(actor: SisActor, input: AssignTeacherInput) 
   }
 
   return await db.transaction(async (tx) => {
-    const [row] = await tx.insert(sisTeacherAssignments).values({
+    const [row] = await tx.insert(smsTeacherAssignments).values({
       organizationId,
       tenantId: actor.tenantId ?? null,
       teacherId,
@@ -141,12 +141,12 @@ export async function assignTeacher(actor: SisActor, input: AssignTeacherInput) 
       actorUserId: actor.userId,
       tenantId: actor.tenantId ?? undefined,
       organizationId,
-      moduleId: 'sis',
+      moduleId: 'sms',
       action: 'teacher-assignment.create',
       resource: 'teacher-assignments',
       recordId: row.id,
       after: row,
-      source: 'sis-service'
+      source: 'sms-service'
     })
     return row
   })

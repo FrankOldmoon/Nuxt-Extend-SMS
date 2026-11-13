@@ -1,7 +1,7 @@
 <template>
   <main class="mx-auto max-w-4xl p-8">
     <h1 class="text-2xl font-semibold">
-      SIS Demo
+      SMS Demo
     </h1>
     <p class="mt-2 text-gray-600">
       Students visible to the current teacher, resolved from TeacherAssignment.
@@ -81,7 +81,7 @@ interface Student {
 }
 
 const query = ref('')
-const { data, refresh, error } = await useFetch<Student[]>('/api/modules/sis-demo/students', {
+const { data, refresh, error } = await useFetch<Student[]>('/api/modules/sms/students', {
   query: { q: query }
 })
 const students = computed(() => data.value ?? [])

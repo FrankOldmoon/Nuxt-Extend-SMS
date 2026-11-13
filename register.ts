@@ -12,7 +12,7 @@ import type {
 import { registerDashboardTable, registerDataScopeResolver, registerTableValidator } from '../../server/sdk'
 import { and, eq, inArray } from 'drizzle-orm'
 import { db } from '../../server/database'
-import { canUseSis, type SisActor } from './server/context'
+import { canUseSms, type SmsActor } from './server/context'
 import {
   assertClassInContext,
   assignedClassIds,
@@ -24,16 +24,16 @@ import { classInContext, assertAcademicYearInContext, assertGradeInContext, asse
 import { assertStudentInContext } from './server/enrollment'
 import { assertGuardianInContext, guardianStudentIds } from './server/guardians'
 import {
-  sisAcademicYears,
-  sisClasses,
-  sisEnrollments,
-  sisGrades,
-  sisGuardians,
-  sisStudentGuardians,
-  sisStudents,
-  sisSubjects,
-  sisTeachers,
-  sisTerms
+  smsAcademicYears,
+  smsClasses,
+  smsEnrollments,
+  smsGrades,
+  smsGuardians,
+  smsStudentGuardians,
+  smsStudents,
+  smsSubjects,
+  smsTeachers,
+  smsTerms
 } from './server/database/schema'
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -53,10 +53,10 @@ function field(partial: Partial<FieldMeta> & Pick<FieldMeta, 'key' | 'label' | '
 
 function permissionsFor(resource: string) {
   return {
-    read: `sis.${resource}.read`,
-    create: `sis.${resource}.create`,
-    update: `sis.${resource}.update`,
-    delete: `sis.${resource}.delete`
+    read: `sms.${resource}.read`,
+    create: `sms.${resource}.create`,
+    update: `sms.${resource}.update`,
+    delete: `sms.${resource}.delete`
   }
 }
 
@@ -188,7 +188,7 @@ const studentGuardianFields: FieldMeta[] = [
 
 const studentsMeta: TableMeta = {
   table: 'students',
-  moduleId: 'sis',
+  moduleId: 'sms',
   resource: 'students',
   permissions: permissionsFor('students'),
   exposure: 'generic-crud',
@@ -201,14 +201,14 @@ const studentsMeta: TableMeta = {
     defaultSort: { field: 'name', order: 'asc' },
     // Role-aware: admin → global, teacher → assigned classes,
     // student → own row, guardian → explicitly linked students.
-    dataScope: { resolver: 'sis.teacherAssignedClasses' }
+    dataScope: { resolver: 'sms.teacherAssignedClasses' }
   }),
   custom: false
 }
 
 const classesMeta: TableMeta = {
   table: 'classes',
-  moduleId: 'sis',
+  moduleId: 'sms',
   resource: 'classes',
   permissions: permissionsFor('classes'),
   exposure: 'generic-crud',
@@ -219,14 +219,14 @@ const classesMeta: TableMeta = {
     softDelete: true,
     search: ['name', 'grade'],
     defaultSort: { field: 'name', order: 'asc' },
-    dataScope: { resolver: 'sis.classes' }
+    dataScope: { resolver: 'sms.classes' }
   }),
   custom: false
 }
 
 const academicYearsMeta: TableMeta = {
   table: 'academicYears',
-  moduleId: 'sis',
+  moduleId: 'sms',
   resource: 'academic-years',
   permissions: permissionsFor('academic-years'),
   exposure: 'generic-crud',
@@ -243,7 +243,7 @@ const academicYearsMeta: TableMeta = {
 
 const termsMeta: TableMeta = {
   table: 'terms',
-  moduleId: 'sis',
+  moduleId: 'sms',
   resource: 'terms',
   permissions: permissionsFor('terms'),
   exposure: 'generic-crud',
@@ -259,7 +259,7 @@ const termsMeta: TableMeta = {
 
 const gradesMeta: TableMeta = {
   table: 'grades',
-  moduleId: 'sis',
+  moduleId: 'sms',
   resource: 'grades',
   permissions: permissionsFor('grades'),
   exposure: 'generic-crud',
@@ -276,7 +276,7 @@ const gradesMeta: TableMeta = {
 
 const subjectsMeta: TableMeta = {
   table: 'subjects',
-  moduleId: 'sis',
+  moduleId: 'sms',
   resource: 'subjects',
   permissions: permissionsFor('subjects'),
   exposure: 'generic-crud',
@@ -293,7 +293,7 @@ const subjectsMeta: TableMeta = {
 
 const teachersMeta: TableMeta = {
   table: 'teachers',
-  moduleId: 'sis',
+  moduleId: 'sms',
   resource: 'teachers',
   permissions: permissionsFor('teachers'),
   exposure: 'generic-crud',
@@ -304,14 +304,14 @@ const teachersMeta: TableMeta = {
     softDelete: true,
     search: ['name', 'employeeNo'],
     defaultSort: { field: 'name', order: 'asc' },
-    dataScope: { resolver: 'sis.teachers' }
+    dataScope: { resolver: 'sms.teachers' }
   }),
   custom: false
 }
 
 const enrollmentsMeta: TableMeta = {
   table: 'enrollments',
-  moduleId: 'sis',
+  moduleId: 'sms',
   resource: 'enrollments',
   permissions: permissionsFor('enrollments'),
   exposure: 'generic-crud',
@@ -321,14 +321,14 @@ const enrollmentsMeta: TableMeta = {
   features: scopedFeatures({
     search: [],
     defaultSort: { field: 'enrolledAt', order: 'desc' },
-    dataScope: { resolver: 'sis.enrollments' }
+    dataScope: { resolver: 'sms.enrollments' }
   }),
   custom: false
 }
 
 const guardiansMeta: TableMeta = {
   table: 'guardians',
-  moduleId: 'sis',
+  moduleId: 'sms',
   resource: 'guardians',
   permissions: permissionsFor('guardians'),
   exposure: 'generic-crud',
@@ -345,7 +345,7 @@ const guardiansMeta: TableMeta = {
 
 const studentGuardiansMeta: TableMeta = {
   table: 'studentGuardians',
-  moduleId: 'sis',
+  moduleId: 'sms',
   resource: 'student-guardians',
   permissions: permissionsFor('student-guardians'),
   exposure: 'generic-crud',
@@ -359,18 +359,18 @@ const studentGuardiansMeta: TableMeta = {
   custom: false
 }
 
-function sisActorFrom(actor: unknown): SisActor {
-  return actor as SisActor
+function smsActorFrom(actor: unknown): SmsActor {
+  return actor as SmsActor
 }
 
 let dashboardRegistered = false
 
-/** Register the SIS tables into generic CRUD, scopes and validators. */
-export function registerSisDashboardTables(): void {
+/** Register the SMS tables into generic CRUD, scopes and validators. */
+export function registerSmsDashboardTables(): void {
   if (dashboardRegistered) return
   dashboardRegistered = true
 
-  registerDataScopeResolver('sis.teacherAssignedClasses', async ({ actor }) => {
+  registerDataScopeResolver('sms.teacherAssignedClasses', async ({ actor }) => {
     if (!actor.organizationId) return { allowed: false, reason: 'missing-context' }
     if (actor.roleName === 'admin' && actor.permissions?.includes('*')) {
       return { allowed: true, scope: 'global' }
@@ -379,10 +379,10 @@ export function registerSisDashboardTables(): void {
       return { allowed: true, scope: 'own', column: 'userId', value: actor.userId }
     }
     if (actor.roleName === 'guardian') {
-      const studentIds = await guardianStudentIds(actor as SisActor)
+      const studentIds = await guardianStudentIds(actor as SmsActor)
       return { allowed: true, scope: 'assigned', column: 'id', value: studentIds[0] ?? 0, values: studentIds }
     }
-    const classIds = await assignedClassIds(actor as SisActor)
+    const classIds = await assignedClassIds(actor as SmsActor)
     return {
       allowed: true,
       scope: 'assigned',
@@ -392,17 +392,17 @@ export function registerSisDashboardTables(): void {
     }
   })
 
-  registerDataScopeResolver('sis.classes', async ({ actor }) => {
+  registerDataScopeResolver('sms.classes', async ({ actor }) => {
     if (!actor.organizationId) return { allowed: false, reason: 'missing-context' }
     if (actor.roleName === 'admin' && actor.permissions?.includes('*')) {
       return { allowed: true, scope: 'global' }
     }
     if (actor.roleName === 'student') {
-      const [row] = await db.select({ classId: sisStudents.classId })
-        .from(sisStudents)
+      const [row] = await db.select({ classId: smsStudents.classId })
+        .from(smsStudents)
         .where(and(
-          eq(sisStudents.organizationId, actor.organizationId),
-          eq(sisStudents.userId, actor.userId)
+          eq(smsStudents.organizationId, actor.organizationId),
+          eq(smsStudents.userId, actor.userId)
         ))
         .limit(1)
       return {
@@ -414,20 +414,20 @@ export function registerSisDashboardTables(): void {
       }
     }
     if (actor.roleName === 'guardian') {
-      const studentIds = await guardianStudentIds(actor as SisActor)
+      const studentIds = await guardianStudentIds(actor as SmsActor)
       const rows = studentIds.length
-        ? await db.select({ classId: sisStudents.classId })
-            .from(sisStudents)
-            .where(inArray(sisStudents.id, studentIds))
+        ? await db.select({ classId: smsStudents.classId })
+            .from(smsStudents)
+            .where(inArray(smsStudents.id, studentIds))
         : []
       const classIds = rows.map(row => row.classId).filter((id): id is number => id !== null)
       return { allowed: true, scope: 'assigned', column: 'id', value: classIds[0] ?? 0, values: classIds }
     }
-    const classIds = await assignedClassIds(actor as SisActor)
+    const classIds = await assignedClassIds(actor as SmsActor)
     return { allowed: true, scope: 'assigned', column: 'id', value: classIds[0] ?? 0, values: classIds }
   })
 
-  registerDataScopeResolver('sis.teachers', async ({ actor }) => {
+  registerDataScopeResolver('sms.teachers', async ({ actor }) => {
     if (!actor.organizationId) return { allowed: false, reason: 'missing-context' }
     if (actor.roleName === 'admin' && actor.permissions?.includes('*')) {
       return { allowed: true, scope: 'global' }
@@ -435,70 +435,70 @@ export function registerSisDashboardTables(): void {
     return { allowed: true, scope: 'own', column: 'userId', value: actor.userId }
   })
 
-  registerDataScopeResolver('sis.enrollments', async ({ actor }) => {
+  registerDataScopeResolver('sms.enrollments', async ({ actor }) => {
     if (!actor.organizationId) return { allowed: false, reason: 'missing-context' }
     if (actor.roleName === 'admin' && actor.permissions?.includes('*')) {
       return { allowed: true, scope: 'global' }
     }
     if (actor.roleName === 'student') {
-      const [row] = await db.select({ id: sisStudents.id })
-        .from(sisStudents)
+      const [row] = await db.select({ id: smsStudents.id })
+        .from(smsStudents)
         .where(and(
-          eq(sisStudents.organizationId, actor.organizationId),
-          eq(sisStudents.userId, actor.userId)
+          eq(smsStudents.organizationId, actor.organizationId),
+          eq(smsStudents.userId, actor.userId)
         ))
         .limit(1)
       return { allowed: true, scope: 'own', column: 'studentId', value: row?.id ?? 0 }
     }
     if (actor.roleName === 'guardian') {
-      const studentIds = await guardianStudentIds(actor as SisActor)
+      const studentIds = await guardianStudentIds(actor as SmsActor)
       return { allowed: true, scope: 'assigned', column: 'studentId', value: studentIds[0] ?? 0, values: studentIds }
     }
     if (actor.roleName === 'teacher') {
-      const classIds = await assignedClassIds(actor as SisActor)
+      const classIds = await assignedClassIds(actor as SmsActor)
       return { allowed: true, scope: 'assigned', column: 'classId', value: classIds[0] ?? 0, values: classIds }
     }
     return { allowed: true, scope: 'organization', column: 'organizationId', value: actor.organizationId }
   })
 
   registerDashboardTable(
-    { meta: studentsMeta, getTable: () => sisStudents },
+    { meta: studentsMeta, getTable: () => smsStudents },
     { menuOrder: 90, exposure: 'generic-crud' }
   )
   registerDashboardTable(
-    { meta: classesMeta, getTable: () => sisClasses },
+    { meta: classesMeta, getTable: () => smsClasses },
     { menuOrder: 91, exposure: 'generic-crud' }
   )
   registerDashboardTable(
-    { meta: academicYearsMeta, getTable: () => sisAcademicYears },
+    { meta: academicYearsMeta, getTable: () => smsAcademicYears },
     { menuOrder: 92, exposure: 'generic-crud' }
   )
   registerDashboardTable(
-    { meta: termsMeta, getTable: () => sisTerms },
+    { meta: termsMeta, getTable: () => smsTerms },
     { menuOrder: 93, exposure: 'generic-crud' }
   )
   registerDashboardTable(
-    { meta: gradesMeta, getTable: () => sisGrades },
+    { meta: gradesMeta, getTable: () => smsGrades },
     { menuOrder: 94, exposure: 'generic-crud' }
   )
   registerDashboardTable(
-    { meta: subjectsMeta, getTable: () => sisSubjects },
+    { meta: subjectsMeta, getTable: () => smsSubjects },
     { menuOrder: 95, exposure: 'generic-crud' }
   )
   registerDashboardTable(
-    { meta: teachersMeta, getTable: () => sisTeachers },
+    { meta: teachersMeta, getTable: () => smsTeachers },
     { menuOrder: 96, exposure: 'generic-crud' }
   )
   registerDashboardTable(
-    { meta: enrollmentsMeta, getTable: () => sisEnrollments },
+    { meta: enrollmentsMeta, getTable: () => smsEnrollments },
     { menuOrder: 97, exposure: 'generic-crud' }
   )
   registerDashboardTable(
-    { meta: guardiansMeta, getTable: () => sisGuardians },
+    { meta: guardiansMeta, getTable: () => smsGuardians },
     { menuOrder: 98, exposure: 'generic-crud' }
   )
   registerDashboardTable(
-    { meta: studentGuardiansMeta, getTable: () => sisStudentGuardians },
+    { meta: studentGuardiansMeta, getTable: () => smsStudentGuardians },
     { menuOrder: 99, exposure: 'generic-crud' }
   )
 
@@ -509,11 +509,11 @@ export function registerSisDashboardTables(): void {
     if (!context.actor?.organizationId) {
       throw new Error('An active organization is required')
     }
-    await assertClassInContext(sisActorFrom(context.actor), Number(classId))
+    await assertClassInContext(smsActorFrom(context.actor), Number(classId))
   })
 
   registerTableValidator('classes', async (payload, context) => {
-    const actor = sisActorFrom(context.actor)
+    const actor = smsActorFrom(context.actor)
     if (payload.academicYearId !== undefined && payload.academicYearId !== null && payload.academicYearId !== '') {
       await assertAcademicYearInContext(actor, Number(payload.academicYearId))
     }
@@ -524,14 +524,14 @@ export function registerSisDashboardTables(): void {
 
   registerTableValidator('terms', async (payload, context) => {
     if (payload.academicYearId === undefined || payload.academicYearId === null || payload.academicYearId === '') return
-    await assertAcademicYearInContext(sisActorFrom(context.actor), Number(payload.academicYearId))
+    await assertAcademicYearInContext(smsActorFrom(context.actor), Number(payload.academicYearId))
   })
 
   registerTableValidator('enrollments', async (payload, context) => {
     if (context.operation === 'update' && 'status' in payload) {
-      throw new Error('Enrollment status changes must go through the SIS enrollment service')
+      throw new Error('Enrollment status changes must go through the SMS enrollment service')
     }
-    const actor = sisActorFrom(context.actor)
+    const actor = smsActorFrom(context.actor)
     const studentId = payload.studentId === undefined || payload.studentId === null ? null : Number(payload.studentId)
     const classId = payload.classId === undefined || payload.classId === null ? null : Number(payload.classId)
     const yearId = payload.academicYearId === undefined || payload.academicYearId === null ? null : Number(payload.academicYearId)
@@ -544,7 +544,7 @@ export function registerSisDashboardTables(): void {
   })
 
   registerTableValidator('teacherAssignments', async (payload, context) => {
-    const actor = sisActorFrom(context.actor)
+    const actor = smsActorFrom(context.actor)
     if (payload.classId !== undefined && payload.classId !== null && payload.classId !== '') {
       await classInContext(actor, Number(payload.classId))
     }
@@ -560,7 +560,7 @@ export function registerSisDashboardTables(): void {
   })
 
   registerTableValidator('studentGuardians', async (payload, context) => {
-    const actor = sisActorFrom(context.actor)
+    const actor = smsActorFrom(context.actor)
     if (payload.studentId !== undefined && payload.studentId !== null && payload.studentId !== '') {
       await assertStudentInContext(actor, Number(payload.studentId))
     }
@@ -570,14 +570,14 @@ export function registerSisDashboardTables(): void {
   })
 }
 
-const sisApis: ModuleApiDefinition<SisActor>[] = [
+const smsApis: ModuleApiDefinition<SmsActor>[] = [
   {
-    id: 'sis.students.search',
-    moduleId: 'sis-demo',
+    id: 'sms.students.search',
+    moduleId: 'sms',
     method: 'GET',
-    path: 'sis-demo/students',
+    path: 'sms/students',
     schema: isRecord,
-    authorize: actor => canUseSis(actor, 'read'),
+    authorize: actor => canUseSms(actor, 'read'),
     handler: (_event, actor, input) => {
       const query = isRecord(input)
         ? (typeof input.q === 'string' ? input.q : typeof input.query === 'string' ? input.query : undefined)
@@ -586,20 +586,20 @@ const sisApis: ModuleApiDefinition<SisActor>[] = [
     }
   },
   {
-    id: 'sis.students.create',
-    moduleId: 'sis-demo',
+    id: 'sms.students.create',
+    moduleId: 'sms',
     method: 'POST',
-    path: 'sis-demo/students',
+    path: 'sms/students',
     schema: isRecord,
-    authorize: actor => canUseSis(actor, 'create'),
+    authorize: actor => canUseSms(actor, 'create'),
     handler: (_event, actor, input) => createStudent(actor, input as CreateStudentInput)
   }
 ]
 
-const sisTools: ToolDefinition<SisActor>[] = [
+const smsTools: ToolDefinition<SmsActor>[] = [
   {
-    id: 'sis.students.search',
-    moduleId: 'sis-demo',
+    id: 'sms.students.search',
+    moduleId: 'sms',
     description: 'Search students visible to the current teacher or organization admin',
     schema: isRecord,
     inputJsonSchema: {
@@ -608,38 +608,38 @@ const sisTools: ToolDefinition<SisActor>[] = [
       additionalProperties: false
     },
     operation: 'query',
-    permission: 'sis:read',
+    permission: 'sms:read',
     approval: 'none',
-    authorize: actor => canUseSis(actor, 'read'),
+    authorize: actor => canUseSms(actor, 'read'),
     execute: (input, actor) => searchStudents(actor, {
       query: isRecord(input) && typeof input.query === 'string' ? input.query : undefined
     })
   }
 ]
 
-const sisUi: UiDefinition<{ rows?: unknown[], query?: string }, Record<string, unknown>> = {
-  id: 'sis.student-table',
-  moduleId: 'sis-demo',
+const smsUi: UiDefinition<{ rows?: unknown[], query?: string }, Record<string, unknown>> = {
+  id: 'sms.student-table',
+  moduleId: 'sms',
   label: 'Student table',
   version: '1.0',
   schema: value => isRecord(value) && (Array.isArray(value.rows) || typeof value.query === 'string'),
-  render: props => ({ component: 'sis.student-table', props })
+  render: props => ({ component: 'sms.student-table', props })
 }
 
-export interface SisRegistries {
-  api: ModuleApiRouter<SisActor>
-  tools: ToolRegistry<SisActor>
+export interface SmsRegistries {
+  api: ModuleApiRouter<SmsActor>
+  tools: ToolRegistry<SmsActor>
   ui: UiRegistry<unknown, unknown>
 }
 
-export function registerSisModule(registries: SisRegistries): void {
-  registerSisDashboardTables()
-  for (const api of sisApis) registries.api.register(api)
-  for (const tool of sisTools) registries.tools.register(tool)
+export function registerSmsModule(registries: SmsRegistries): void {
+  registerSmsDashboardTables()
+  for (const api of smsApis) registries.api.register(api)
+  for (const tool of smsTools) registries.tools.register(tool)
   registries.ui.register({
-    id: sisUi.id,
-    version: sisUi.version,
-    schema: sisUi.schema,
-    render: props => sisUi.render(props as { rows?: unknown[], query?: string })
+    id: smsUi.id,
+    version: smsUi.version,
+    schema: smsUi.schema,
+    render: props => smsUi.render(props as { rows?: unknown[], query?: string })
   })
 }

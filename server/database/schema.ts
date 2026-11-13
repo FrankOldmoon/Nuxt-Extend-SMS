@@ -11,8 +11,8 @@ import {
   varchar
 } from 'drizzle-orm/pg-core'
 
-export const sisAcademicYears = pgTable(
-  'sis_academic_years',
+export const smsAcademicYears = pgTable(
+  'sms_academic_years',
   {
     id: serial('id').primaryKey(),
     organizationId: integer('organization_id').notNull(),
@@ -25,13 +25,13 @@ export const sisAcademicYears = pgTable(
     createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull()
   },
   table => ({
-    organizationNameIdx: uniqueIndex('sis_academic_years_org_name_idx').on(table.organizationId, table.name),
-    tenantIdx: index('sis_academic_years_tenant_idx').on(table.tenantId)
+    organizationNameIdx: uniqueIndex('sms_academic_years_org_name_idx').on(table.organizationId, table.name),
+    tenantIdx: index('sms_academic_years_tenant_idx').on(table.tenantId)
   })
 )
 
-export const sisTerms = pgTable(
-  'sis_terms',
+export const smsTerms = pgTable(
+  'sms_terms',
   {
     id: serial('id').primaryKey(),
     organizationId: integer('organization_id').notNull(),
@@ -43,13 +43,13 @@ export const sisTerms = pgTable(
     createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull()
   },
   table => ({
-    yearNameIdx: uniqueIndex('sis_terms_year_name_idx').on(table.academicYearId, table.name),
-    organizationIdx: index('sis_terms_organization_idx').on(table.organizationId)
+    yearNameIdx: uniqueIndex('sms_terms_year_name_idx').on(table.academicYearId, table.name),
+    organizationIdx: index('sms_terms_organization_idx').on(table.organizationId)
   })
 )
 
-export const sisGrades = pgTable(
-  'sis_grades',
+export const smsGrades = pgTable(
+  'sms_grades',
   {
     id: serial('id').primaryKey(),
     organizationId: integer('organization_id').notNull(),
@@ -60,12 +60,12 @@ export const sisGrades = pgTable(
     createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull()
   },
   table => ({
-    organizationNameIdx: uniqueIndex('sis_grades_org_name_idx').on(table.organizationId, table.name)
+    organizationNameIdx: uniqueIndex('sms_grades_org_name_idx').on(table.organizationId, table.name)
   })
 )
 
-export const sisSubjects = pgTable(
-  'sis_subjects',
+export const smsSubjects = pgTable(
+  'sms_subjects',
   {
     id: serial('id').primaryKey(),
     organizationId: integer('organization_id').notNull(),
@@ -76,12 +76,12 @@ export const sisSubjects = pgTable(
     createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull()
   },
   table => ({
-    organizationCodeIdx: uniqueIndex('sis_subjects_org_code_idx').on(table.organizationId, table.code)
+    organizationCodeIdx: uniqueIndex('sms_subjects_org_code_idx').on(table.organizationId, table.code)
   })
 )
 
-export const sisTeachers = pgTable(
-  'sis_teachers',
+export const smsTeachers = pgTable(
+  'sms_teachers',
   {
     id: serial('id').primaryKey(),
     organizationId: integer('organization_id').notNull(),
@@ -93,12 +93,12 @@ export const sisTeachers = pgTable(
     createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull()
   },
   table => ({
-    organizationUserIdx: uniqueIndex('sis_teachers_org_user_idx').on(table.organizationId, table.userId)
+    organizationUserIdx: uniqueIndex('sms_teachers_org_user_idx').on(table.organizationId, table.userId)
   })
 )
 
-export const sisClasses = pgTable(
-  'sis_classes',
+export const smsClasses = pgTable(
+  'sms_classes',
   {
     id: serial('id').primaryKey(),
     organizationId: integer('organization_id').notNull(),
@@ -112,14 +112,14 @@ export const sisClasses = pgTable(
     createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull()
   },
   table => ({
-    organizationNameIdx: uniqueIndex('sis_classes_org_name_idx').on(table.organizationId, table.name),
-    organizationYearIdx: index('sis_classes_org_year_idx').on(table.organizationId, table.academicYearId),
-    tenantIdx: index('sis_classes_tenant_idx').on(table.tenantId)
+    organizationNameIdx: uniqueIndex('sms_classes_org_name_idx').on(table.organizationId, table.name),
+    organizationYearIdx: index('sms_classes_org_year_idx').on(table.organizationId, table.academicYearId),
+    tenantIdx: index('sms_classes_tenant_idx').on(table.tenantId)
   })
 )
 
-export const sisStudents = pgTable(
-  'sis_students',
+export const smsStudents = pgTable(
+  'sms_students',
   {
     id: serial('id').primaryKey(),
     organizationId: integer('organization_id').notNull(),
@@ -133,15 +133,15 @@ export const sisStudents = pgTable(
     createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull()
   },
   table => ({
-    organizationStudentNoIdx: uniqueIndex('sis_students_org_student_no_idx').on(table.organizationId, table.studentNo),
-    organizationClassIdx: index('sis_students_org_class_idx').on(table.organizationId, table.classId),
-    organizationUserIdx: uniqueIndex('sis_students_org_user_idx').on(table.organizationId, table.userId),
-    tenantIdx: index('sis_students_tenant_idx').on(table.tenantId)
+    organizationStudentNoIdx: uniqueIndex('sms_students_org_student_no_idx').on(table.organizationId, table.studentNo),
+    organizationClassIdx: index('sms_students_org_class_idx').on(table.organizationId, table.classId),
+    organizationUserIdx: uniqueIndex('sms_students_org_user_idx').on(table.organizationId, table.userId),
+    tenantIdx: index('sms_students_tenant_idx').on(table.tenantId)
   })
 )
 
-export const sisTeacherAssignments = pgTable(
-  'sis_teacher_assignments',
+export const smsTeacherAssignments = pgTable(
+  'sms_teacher_assignments',
   {
     id: serial('id').primaryKey(),
     organizationId: integer('organization_id').notNull(),
@@ -156,14 +156,14 @@ export const sisTeacherAssignments = pgTable(
     createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull()
   },
   table => ({
-    teacherClassIdx: uniqueIndex('sis_teacher_assignments_teacher_class_idx').on(table.teacherUserId, table.classId),
-    classIdx: index('sis_teacher_assignments_class_idx').on(table.classId),
-    organizationIdx: index('sis_teacher_assignments_organization_idx').on(table.organizationId)
+    teacherClassIdx: uniqueIndex('sms_teacher_assignments_teacher_class_idx').on(table.teacherUserId, table.classId),
+    classIdx: index('sms_teacher_assignments_class_idx').on(table.classId),
+    organizationIdx: index('sms_teacher_assignments_organization_idx').on(table.organizationId)
   })
 )
 
-export const sisEnrollments = pgTable(
-  'sis_enrollments',
+export const smsEnrollments = pgTable(
+  'sms_enrollments',
   {
     id: serial('id').primaryKey(),
     organizationId: integer('organization_id').notNull(),
@@ -179,17 +179,17 @@ export const sisEnrollments = pgTable(
     createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull()
   },
   table => ({
-    organizationIdx: index('sis_enrollments_organization_idx').on(table.organizationId),
-    studentStatusIdx: index('sis_enrollments_student_status_idx').on(table.studentId, table.status),
-    classStatusIdx: index('sis_enrollments_class_status_idx').on(table.classId, table.status),
-    activeYearIdx: uniqueIndex('sis_enrollments_active_year_idx')
+    organizationIdx: index('sms_enrollments_organization_idx').on(table.organizationId),
+    studentStatusIdx: index('sms_enrollments_student_status_idx').on(table.studentId, table.status),
+    classStatusIdx: index('sms_enrollments_class_status_idx').on(table.classId, table.status),
+    activeYearIdx: uniqueIndex('sms_enrollments_active_year_idx')
       .on(table.studentId, table.academicYearId)
       .where(sql`${table.status} = 'active'`)
   })
 )
 
-export const sisGuardians = pgTable(
-  'sis_guardians',
+export const smsGuardians = pgTable(
+  'sms_guardians',
   {
     id: serial('id').primaryKey(),
     organizationId: integer('organization_id').notNull(),
@@ -201,12 +201,12 @@ export const sisGuardians = pgTable(
     createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull()
   },
   table => ({
-    organizationUserIdx: uniqueIndex('sis_guardians_org_user_idx').on(table.organizationId, table.userId)
+    organizationUserIdx: uniqueIndex('sms_guardians_org_user_idx').on(table.organizationId, table.userId)
   })
 )
 
-export const sisStudentGuardians = pgTable(
-  'sis_student_guardians',
+export const smsStudentGuardians = pgTable(
+  'sms_student_guardians',
   {
     id: serial('id').primaryKey(),
     organizationId: integer('organization_id').notNull(),
@@ -218,7 +218,7 @@ export const sisStudentGuardians = pgTable(
     createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull()
   },
   table => ({
-    studentGuardianIdx: uniqueIndex('sis_student_guardians_pair_idx').on(table.studentId, table.guardianId),
-    guardianIdx: index('sis_student_guardians_guardian_idx').on(table.guardianId)
+    studentGuardianIdx: uniqueIndex('sms_student_guardians_pair_idx').on(table.studentId, table.guardianId),
+    guardianIdx: index('sms_student_guardians_guardian_idx').on(table.guardianId)
   })
 )

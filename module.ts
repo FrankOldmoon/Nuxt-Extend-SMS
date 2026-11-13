@@ -4,12 +4,12 @@ import type {
   ToolRegistry,
   UiRegistry
 } from '../../server/sdk'
-import type { SisActor } from './server/context'
-import { sisMigrations } from './server/database/migrations'
+import type { SmsActor } from './server/context'
+import { smsMigrations } from './server/database/migrations'
 
-export const sisDemoModule: ModuleDefinition = {
-  id: 'sis-demo',
-  name: 'SIS Demo',
+export const smsModule: ModuleDefinition = {
+  id: 'sms',
+  name: 'SMS',
   version: '1.0.0',
   apiVersion: '1',
   compatibility: { core: '^1.0.0' },
@@ -17,40 +17,40 @@ export const sisDemoModule: ModuleDefinition = {
   capabilities: { multiTenant: true },
   dependencies: [],
   permissions: [
-    'sis:read',
-    'sis:create',
-    'sis:update',
-    'sis.students.read',
-    'sis.students.create',
-    'sis.enrollments.read',
-    'sis.enrollments.create',
-    'sis.teacher-assignments.create',
-    'sis.academic-years.read',
-    'sis.academic-years.create'
+    'sms:read',
+    'sms:create',
+    'sms:update',
+    'sms.students.read',
+    'sms.students.create',
+    'sms.enrollments.read',
+    'sms.enrollments.create',
+    'sms.teacher-assignments.create',
+    'sms.academic-years.read',
+    'sms.academic-years.create'
   ],
-  navigation: [{ id: 'sis', label: 'SIS', to: '/sis' }],
+  navigation: [{ id: 'sms', label: 'SMS', to: '/sms' }],
   database: [
-    'sis_academic_years',
-    'sis_terms',
-    'sis_grades',
-    'sis_subjects',
-    'sis_teachers',
-    'sis_classes',
-    'sis_students',
-    'sis_teacher_assignments',
-    'sis_enrollments',
-    'sis_guardians',
-    'sis_student_guardians'
+    'sms_academic_years',
+    'sms_terms',
+    'sms_grades',
+    'sms_subjects',
+    'sms_teachers',
+    'sms_classes',
+    'sms_students',
+    'sms_teacher_assignments',
+    'sms_enrollments',
+    'sms_guardians',
+    'sms_student_guardians'
   ],
-  api: ['GET /api/modules/sis-demo/students'],
-  tools: ['sis.students.search'],
-  components: ['sis.student-table'],
-  migrations: sisMigrations,
+  api: ['GET /api/modules/sms/students'],
+  tools: ['sms.students.search'],
+  components: ['sms.student-table'],
+  migrations: smsMigrations,
   async register(context) {
-    const { registerSisModule } = await import('./register')
-    registerSisModule({
-      api: context.api as unknown as ModuleApiRouter<SisActor>,
-      tools: context.tools as unknown as ToolRegistry<SisActor>,
+    const { registerSmsModule } = await import('./register')
+    registerSmsModule({
+      api: context.api as unknown as ModuleApiRouter<SmsActor>,
+      tools: context.tools as unknown as ToolRegistry<SmsActor>,
       ui: context.ui as unknown as UiRegistry<unknown, unknown>
     })
   }

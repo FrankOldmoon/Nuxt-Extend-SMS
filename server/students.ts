@@ -2,8 +2,8 @@ import { and, asc, eq, ilike, inArray, isNull, or } from 'drizzle-orm'
 import { createError } from 'h3'
 import { db } from '../../../server/database'
 import { writeAudit } from '../../../server/sdk'
-import { sisClasses, sisStudents, sisTeacherAssignments } from './database/schema'
-import { canUseSis, isSisAdmin, requireSisOrganization, type SisActor } from './context'
+import { smsClasses, smsStudents, smsTeacherAssignments } from './database/schema'
+import { canUseSms, isSmsAdmin, requireSmsOrganization, type SmsActor } from './context'
 import { guardianStudentIds } from './guardians'
 
 export interface StudentSearchOptions {
@@ -12,13 +12,13 @@ export interface StudentSearchOptions {
 }
 
 /** Classes assigned to the teacher in the current organization. */
-export async function assignedClassIds(actor: SisActor): Promise<number[]> {
-  const organizationId = requireSisOrganization(actor)
-  const rows = await db.select({ classId: sisTeacherAssignments.classId })
-    .from(sisTeacherAssignments)
+export async function assignedClassIds(actor: SmsActor): Promise<number[]> {
+  const organizationId = requireSmsOrganization(actor)
+  const rows = await db.select({ classId: smsTeacherAssignments.classId })
+    .from(smsTeacherAssignments)
     .where(and(
-      eq(sisTeacherAssignments.organizationId, organizationId),
-      eq(sisTeacherAssignments.teacherUserId, actor.userId)
+      eq(smsTeacherAssignments.organizationId, organizationId),
+      eq(smsTeacherAssignments.teacherUserId, actor.userId)
     ))
   return rows.map(row => row.classId)
 }
@@ -34,9 +34,9 @@ export interface CreateStudentInput {
  * Dedicated creation path: ownership comes from the authenticated context and
  * the class must belong to the same tenant + organization.
  */
-export async function createStudent(actor: SisActor, input: CreateStudentInput) {
-  const organizationId = requireSisOrganization(actor)
-  if (!canUseSis(actor, 'create')) {
+export async function createStudent(actor: SmsActor, input: CreateStudentInput) {
+  const organizationId = requireSmsOrganization(actor)
+  if (!canUseSms(actor, 'create')) {
     throw createError({ statusCode: 403, statusMessage: 'Forbidden', message: 'No permission to create students' })
   }
   const name = typeof input.name === 'string' ? input.name.trim() : ''
@@ -57,7 +57,7 @@ export async function createStudent(actor: SisActor, input: CreateStudentInput) 
 
   if (classId !== null) {
     await assertClassInContext(actor, classId)
-    if (!isSisAdmin(actor)) {
+    if (!isSmsAdmin(actor)) {
       const assigned = await assignedClassIds(actor)
       if (!assigned.includes(classId)) {
         throw createError({ statusCode: 403, statusMessage: 'Forbidden', message: 'No access to the requested class' })
@@ -66,7 +66,7 @@ export async function createStudent(actor: SisActor, input: CreateStudentInput) 
   }
 
   return await db.transaction(async (tx) => {
-    const [row] = await tx.insert(sisStudents).values({
+    const [row] = await tx.insert(smsStudents).values({
       organizationId,
       tenantId: actor.tenantId ?? null,
       classId,
@@ -79,24 +79,24 @@ export async function createStudent(actor: SisActor, input: CreateStudentInput) 
       actorUserId: actor.userId,
       tenantId: actor.tenantId ?? undefined,
       organizationId,
-      moduleId: 'sis',
+      moduleId: 'sms',
       action: 'student.create',
       resource: 'students',
       recordId: row.id,
       after: row,
-      source: 'sis-api'
+      source: 'sms-api'
     })
     return row
   })
 }
 
 /** Validate a class belongs to the actor's tenant + organization. */
-export async function assertClassInContext(actor: SisActor, classId: number) {
-  const organizationId = requireSisOrganization(actor)
+export async function assertClassInContext(actor: SmsActor, classId: number) {
+  const organizationId = requireSmsOrganization(actor)
   const [row] = await db.select({
-    organizationId: sisClasses.organizationId,
-    tenantId: sisClasses.tenantId
-  }).from(sisClasses).where(eq(sisClasses.id, classId)).limit(1)
+    organizationId: smsClasses.organizationId,
+    tenantId: smsClasses.tenantId
+  }).from(smsClasses).where(eq(smsClasses.id, classId)).limit(1)
   if (!row || row.organizationId !== organizationId) {
     throw createError({ statusCode: 400, statusMessage: 'Bad Request', message: 'classId does not belong to the current organization' })
   }
@@ -106,40 +106,40 @@ export async function assertClassInContext(actor: SisActor, classId: number) {
 }
 
 /**
- * Shared SIS student search used by the module API, the Tool Registry and the
+ * Shared SMS student search used by the module API, the Tool Registry and the
  * page. Row scope comes from TeacherAssignment, never from request input.
  */
-export async function searchStudents(actor: SisActor, options: StudentSearchOptions = {}) {
-  const organizationId = requireSisOrganization(actor)
+export async function searchStudents(actor: SmsActor, options: StudentSearchOptions = {}) {
+  const organizationId = requireSmsOrganization(actor)
   const limit = Math.min(Math.max(options.limit ?? 50, 1), 200)
-  const conditions = [eq(sisStudents.organizationId, organizationId), isNull(sisStudents.deletedAt)]
+  const conditions = [eq(smsStudents.organizationId, organizationId), isNull(smsStudents.deletedAt)]
 
   const query = options.query?.trim()
   if (query) {
     conditions.push(or(
-      ilike(sisStudents.name, `%${query}%`),
-      ilike(sisStudents.studentNo, `%${query}%`)
+      ilike(smsStudents.name, `%${query}%`),
+      ilike(smsStudents.studentNo, `%${query}%`)
     )!)
   }
-  if (!isSisAdmin(actor)) {
+  if (!isSmsAdmin(actor)) {
     if (actor.roleName === 'student') {
-      conditions.push(eq(sisStudents.userId, actor.userId))
+      conditions.push(eq(smsStudents.userId, actor.userId))
     } else if (actor.roleName === 'guardian') {
-      conditions.push(inArray(sisStudents.id, await guardianStudentIds(actor)))
+      conditions.push(inArray(smsStudents.id, await guardianStudentIds(actor)))
     } else {
-      conditions.push(inArray(sisStudents.classId, await assignedClassIds(actor)))
+      conditions.push(inArray(smsStudents.classId, await assignedClassIds(actor)))
     }
   }
 
   return await db.select({
-    id: sisStudents.id,
-    name: sisStudents.name,
-    studentNo: sisStudents.studentNo,
-    classId: sisStudents.classId,
-    organizationId: sisStudents.organizationId
+    id: smsStudents.id,
+    name: smsStudents.name,
+    studentNo: smsStudents.studentNo,
+    classId: smsStudents.classId,
+    organizationId: smsStudents.organizationId
   })
-    .from(sisStudents)
+    .from(smsStudents)
     .where(and(...conditions))
-    .orderBy(asc(sisStudents.name))
+    .orderBy(asc(smsStudents.name))
     .limit(limit)
 }

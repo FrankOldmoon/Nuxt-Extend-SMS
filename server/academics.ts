@@ -3,17 +3,17 @@ import { createError } from 'h3'
 import { db } from '../../../server/database'
 import { writeAudit } from '../../../server/sdk'
 import {
-  sisAcademicYears,
-  sisClasses,
-  sisGrades,
-  sisSubjects,
-  sisTerms
+  smsAcademicYears,
+  smsClasses,
+  smsGrades,
+  smsSubjects,
+  smsTerms
 } from './database/schema'
-import { canUseSis, requireSisOrganization, type SisActor } from './context'
+import { canUseSms, requireSmsOrganization, type SmsActor } from './context'
 
-function requireManage(actor: SisActor, resource: string): number {
-  const organizationId = requireSisOrganization(actor)
-  if (!canUseSis(actor, 'create', resource)) {
+function requireManage(actor: SmsActor, resource: string): number {
+  const organizationId = requireSmsOrganization(actor)
+  if (!canUseSms(actor, 'create', resource)) {
     throw createError({ statusCode: 403, statusMessage: 'Forbidden', message: `No permission to manage ${resource}` })
   }
   return organizationId
@@ -42,11 +42,11 @@ function positiveId(value: unknown, field: string): number {
 }
 
 /** Ensure an academic year belongs to the actor's organization. */
-export async function assertAcademicYearInContext(actor: SisActor, academicYearId: number): Promise<number> {
-  const organizationId = requireSisOrganization(actor)
-  const [row] = await db.select({ organizationId: sisAcademicYears.organizationId })
-    .from(sisAcademicYears)
-    .where(eq(sisAcademicYears.id, academicYearId))
+export async function assertAcademicYearInContext(actor: SmsActor, academicYearId: number): Promise<number> {
+  const organizationId = requireSmsOrganization(actor)
+  const [row] = await db.select({ organizationId: smsAcademicYears.organizationId })
+    .from(smsAcademicYears)
+    .where(eq(smsAcademicYears.id, academicYearId))
     .limit(1)
   if (!row || row.organizationId !== organizationId) {
     throw createError({ statusCode: 400, statusMessage: 'Bad Request', message: 'academicYearId does not belong to the current organization' })
@@ -54,12 +54,12 @@ export async function assertAcademicYearInContext(actor: SisActor, academicYearI
   return academicYearId
 }
 
-export async function assertTermInContext(actor: SisActor, termId: number, academicYearId?: number): Promise<void> {
-  const organizationId = requireSisOrganization(actor)
+export async function assertTermInContext(actor: SmsActor, termId: number, academicYearId?: number): Promise<void> {
+  const organizationId = requireSmsOrganization(actor)
   const [row] = await db.select({
-    organizationId: sisTerms.organizationId,
-    academicYearId: sisTerms.academicYearId
-  }).from(sisTerms).where(eq(sisTerms.id, termId)).limit(1)
+    organizationId: smsTerms.organizationId,
+    academicYearId: smsTerms.academicYearId
+  }).from(smsTerms).where(eq(smsTerms.id, termId)).limit(1)
   if (!row || row.organizationId !== organizationId) {
     throw createError({ statusCode: 400, statusMessage: 'Bad Request', message: 'termId does not belong to the current organization' })
   }
@@ -68,19 +68,19 @@ export async function assertTermInContext(actor: SisActor, termId: number, acade
   }
 }
 
-export async function assertGradeInContext(actor: SisActor, gradeId: number): Promise<void> {
-  const organizationId = requireSisOrganization(actor)
-  const [row] = await db.select({ organizationId: sisGrades.organizationId })
-    .from(sisGrades).where(eq(sisGrades.id, gradeId)).limit(1)
+export async function assertGradeInContext(actor: SmsActor, gradeId: number): Promise<void> {
+  const organizationId = requireSmsOrganization(actor)
+  const [row] = await db.select({ organizationId: smsGrades.organizationId })
+    .from(smsGrades).where(eq(smsGrades.id, gradeId)).limit(1)
   if (!row || row.organizationId !== organizationId) {
     throw createError({ statusCode: 400, statusMessage: 'Bad Request', message: 'gradeId does not belong to the current organization' })
   }
 }
 
-export async function assertSubjectInContext(actor: SisActor, subjectId: number): Promise<void> {
-  const organizationId = requireSisOrganization(actor)
-  const [row] = await db.select({ organizationId: sisSubjects.organizationId })
-    .from(sisSubjects).where(eq(sisSubjects.id, subjectId)).limit(1)
+export async function assertSubjectInContext(actor: SmsActor, subjectId: number): Promise<void> {
+  const organizationId = requireSmsOrganization(actor)
+  const [row] = await db.select({ organizationId: smsSubjects.organizationId })
+    .from(smsSubjects).where(eq(smsSubjects.id, subjectId)).limit(1)
   if (!row || row.organizationId !== organizationId) {
     throw createError({ statusCode: 400, statusMessage: 'Bad Request', message: 'subjectId does not belong to the current organization' })
   }
@@ -93,7 +93,7 @@ export interface CreateAcademicYearInput {
   isCurrent?: unknown
 }
 
-export async function createAcademicYear(actor: SisActor, input: CreateAcademicYearInput) {
+export async function createAcademicYear(actor: SmsActor, input: CreateAcademicYearInput) {
   const organizationId = requireManage(actor, 'academic-years')
   const name = text(input.name, 'name')
   const startDate = dateValue(input.startDate, 'startDate')
@@ -102,7 +102,7 @@ export async function createAcademicYear(actor: SisActor, input: CreateAcademicY
     throw createError({ statusCode: 400, statusMessage: 'Bad Request', message: 'endDate must be after startDate' })
   }
   return await db.transaction(async (tx) => {
-    const [row] = await tx.insert(sisAcademicYears).values({
+    const [row] = await tx.insert(smsAcademicYears).values({
       organizationId,
       tenantId: actor.tenantId ?? null,
       name,
@@ -115,12 +115,12 @@ export async function createAcademicYear(actor: SisActor, input: CreateAcademicY
       actorUserId: actor.userId,
       tenantId: actor.tenantId ?? undefined,
       organizationId,
-      moduleId: 'sis',
+      moduleId: 'sms',
       action: 'academic-year.create',
       resource: 'academic-years',
       recordId: row.id,
       after: row,
-      source: 'sis-service'
+      source: 'sms-service'
     })
     return row
   })
@@ -133,7 +133,7 @@ export interface CreateTermInput {
   endDate?: unknown
 }
 
-export async function createTerm(actor: SisActor, input: CreateTermInput) {
+export async function createTerm(actor: SmsActor, input: CreateTermInput) {
   const organizationId = requireManage(actor, 'terms')
   const academicYearId = positiveId(input.academicYearId, 'academicYearId')
   await assertAcademicYearInContext(actor, academicYearId)
@@ -144,7 +144,7 @@ export async function createTerm(actor: SisActor, input: CreateTermInput) {
     throw createError({ statusCode: 400, statusMessage: 'Bad Request', message: 'endDate must be after startDate' })
   }
   return await db.transaction(async (tx) => {
-    const [row] = await tx.insert(sisTerms).values({
+    const [row] = await tx.insert(smsTerms).values({
       organizationId,
       tenantId: actor.tenantId ?? null,
       academicYearId,
@@ -157,12 +157,12 @@ export async function createTerm(actor: SisActor, input: CreateTermInput) {
       actorUserId: actor.userId,
       tenantId: actor.tenantId ?? undefined,
       organizationId,
-      moduleId: 'sis',
+      moduleId: 'sms',
       action: 'term.create',
       resource: 'terms',
       recordId: row.id,
       after: row,
-      source: 'sis-service'
+      source: 'sms-service'
     })
     return row
   })
@@ -173,7 +173,7 @@ export interface CreateGradeInput {
   level?: unknown
 }
 
-export async function createGrade(actor: SisActor, input: CreateGradeInput) {
+export async function createGrade(actor: SmsActor, input: CreateGradeInput) {
   const organizationId = requireManage(actor, 'grades')
   const name = text(input.name, 'name')
   const level = input.level === undefined || input.level === null || input.level === ''
@@ -183,7 +183,7 @@ export async function createGrade(actor: SisActor, input: CreateGradeInput) {
     throw createError({ statusCode: 400, statusMessage: 'Bad Request', message: 'level must be an integer' })
   }
   return await db.transaction(async (tx) => {
-    const [row] = await tx.insert(sisGrades).values({
+    const [row] = await tx.insert(smsGrades).values({
       organizationId,
       tenantId: actor.tenantId ?? null,
       name,
@@ -194,12 +194,12 @@ export async function createGrade(actor: SisActor, input: CreateGradeInput) {
       actorUserId: actor.userId,
       tenantId: actor.tenantId ?? undefined,
       organizationId,
-      moduleId: 'sis',
+      moduleId: 'sms',
       action: 'grade.create',
       resource: 'grades',
       recordId: row.id,
       after: row,
-      source: 'sis-service'
+      source: 'sms-service'
     })
     return row
   })
@@ -210,12 +210,12 @@ export interface CreateSubjectInput {
   name?: unknown
 }
 
-export async function createSubject(actor: SisActor, input: CreateSubjectInput) {
+export async function createSubject(actor: SmsActor, input: CreateSubjectInput) {
   const organizationId = requireManage(actor, 'subjects')
   const code = text(input.code, 'code')
   const name = text(input.name, 'name')
   return await db.transaction(async (tx) => {
-    const [row] = await tx.insert(sisSubjects).values({
+    const [row] = await tx.insert(smsSubjects).values({
       organizationId,
       tenantId: actor.tenantId ?? null,
       code,
@@ -226,12 +226,12 @@ export async function createSubject(actor: SisActor, input: CreateSubjectInput) 
       actorUserId: actor.userId,
       tenantId: actor.tenantId ?? undefined,
       organizationId,
-      moduleId: 'sis',
+      moduleId: 'sms',
       action: 'subject.create',
       resource: 'subjects',
       recordId: row.id,
       after: row,
-      source: 'sis-service'
+      source: 'sms-service'
     })
     return row
   })
@@ -244,7 +244,7 @@ export interface CreateClassInput {
 }
 
 /** Relational class creation: year and grade must belong to the organization. */
-export async function createClass(actor: SisActor, input: CreateClassInput) {
+export async function createClass(actor: SmsActor, input: CreateClassInput) {
   const organizationId = requireManage(actor, 'classes')
   const name = text(input.name, 'name')
   const academicYearId = positiveId(input.academicYearId, 'academicYearId')
@@ -253,7 +253,7 @@ export async function createClass(actor: SisActor, input: CreateClassInput) {
   await assertGradeInContext(actor, gradeId)
 
   return await db.transaction(async (tx) => {
-    const [row] = await tx.insert(sisClasses).values({
+    const [row] = await tx.insert(smsClasses).values({
       organizationId,
       tenantId: actor.tenantId ?? null,
       name,
@@ -265,31 +265,31 @@ export async function createClass(actor: SisActor, input: CreateClassInput) {
       actorUserId: actor.userId,
       tenantId: actor.tenantId ?? undefined,
       organizationId,
-      moduleId: 'sis',
+      moduleId: 'sms',
       action: 'class.create',
       resource: 'classes',
       recordId: row.id,
       after: row,
-      source: 'sis-service'
+      source: 'sms-service'
     })
     return row
   })
 }
 
 /** Validate a class belongs to the organization and return its academic year. */
-export async function classInContext(actor: SisActor, classId: number): Promise<{
+export async function classInContext(actor: SmsActor, classId: number): Promise<{
   id: number
   academicYearId: number | null
   gradeId: number | null
 }> {
-  const organizationId = requireSisOrganization(actor)
+  const organizationId = requireSmsOrganization(actor)
   const [row] = await db.select({
-    id: sisClasses.id,
-    academicYearId: sisClasses.academicYearId,
-    gradeId: sisClasses.gradeId
-  }).from(sisClasses).where(and(
-    eq(sisClasses.id, classId),
-    eq(sisClasses.organizationId, organizationId)
+    id: smsClasses.id,
+    academicYearId: smsClasses.academicYearId,
+    gradeId: smsClasses.gradeId
+  }).from(smsClasses).where(and(
+    eq(smsClasses.id, classId),
+    eq(smsClasses.organizationId, organizationId)
   )).limit(1)
   if (!row) {
     throw createError({ statusCode: 400, statusMessage: 'Bad Request', message: 'classId does not belong to the current organization' })

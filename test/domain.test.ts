@@ -1,14 +1,14 @@
-// Phase 4 acceptance: SIS academic domain (years, terms, grades, subjects,
+// Phase 4 acceptance: SMS academic domain (years, terms, grades, subjects,
 // teachers, classes, enrollments, guardians) with organization isolation,
 // role-aware access and audit history.
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { pool } from '../../../server/database'
 import { applyModuleMigrations } from '../../../server/database/moduleMigrations'
-import { MODULE_DEFINITIONS } from '../../../modules.catalog'
+import { smsModule } from '../module'
 import { getRegisteredTable } from '../../../server/utils/dashboard/tables'
 import { listTableData, type DataScopeActor } from '../../../server/utils/dashboard/crudService'
 import { ModuleApiRouter, ToolRegistry, UiRegistry } from '../../../server/core/moduleSdk'
-import { registerSisModule } from '../register'
+import { registerSmsModule } from '../register'
 import { createStudent } from '../server/students'
 import {
   createAcademicYear,
@@ -20,9 +20,9 @@ import {
 import { assignTeacher, createTeacher } from '../server/teachers'
 import { enrollStudent, withdrawEnrollment } from '../server/enrollment'
 import { createGuardian, linkGuardian } from '../server/guardians'
-import type { SisActor } from '../server/context'
+import type { SmsActor } from '../server/context'
 
-describe('SIS academic domain (database)', () => {
+describe('SMS academic domain (database)', () => {
   const suffix = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
   let tenantId = 0
   let organizationId = 0
@@ -39,32 +39,32 @@ describe('SIS academic domain (database)', () => {
   let studentId = 0
   let enrollmentId = 0
 
-  const admin: SisActor = { userId: 1, roleName: 'admin', permissions: ['*'], organizationId: 0, tenantId: 0 }
-  const teacherActor: SisActor = { userId: 5001, roleName: 'teacher', permissions: ['sis:read', 'sis:create'], organizationId: 0, tenantId: 0 }
-  const studentActor: SisActor = { userId: 6001, roleName: 'student', permissions: ['sis:read'], organizationId: 0, tenantId: 0 }
-  const guardianActor: SisActor = { userId: 7001, roleName: 'guardian', permissions: ['sis:read'], organizationId: 0, tenantId: 0 }
+  const admin: SmsActor = { userId: 1, roleName: 'admin', permissions: ['*'], organizationId: 0, tenantId: 0 }
+  const teacherActor: SmsActor = { userId: 5001, roleName: 'teacher', permissions: ['sms:read', 'sms:create'], organizationId: 0, tenantId: 0 }
+  const studentActor: SmsActor = { userId: 6001, roleName: 'student', permissions: ['sms:read'], organizationId: 0, tenantId: 0 }
+  const guardianActor: SmsActor = { userId: 7001, roleName: 'guardian', permissions: ['sms:read'], organizationId: 0, tenantId: 0 }
 
   beforeAll(async () => {
-    await applyModuleMigrations(pool, MODULE_DEFINITIONS)
-    registerSisModule({
-      api: new ModuleApiRouter<SisActor>(),
-      tools: new ToolRegistry<SisActor>(),
+    await applyModuleMigrations(pool, [smsModule])
+    registerSmsModule({
+      api: new ModuleApiRouter<SmsActor>(),
+      tools: new ToolRegistry<SmsActor>(),
       ui: new UiRegistry<unknown, unknown>()
     })
 
     const tenant = await pool.query(
       `INSERT INTO tenants (name, slug) VALUES ($1, $2) RETURNING id`,
-      ['sis-domain', `sis-domain-${suffix}`]
+      ['sms-domain', `sms-domain-${suffix}`]
     )
     tenantId = tenant.rows[0].id
     const org = await pool.query(
       `INSERT INTO organizations (tenant_id, name, slug) VALUES ($1, 'Domain Org', $2) RETURNING id`,
-      [tenantId, `sis-domain-org-${suffix}`]
+      [tenantId, `sms-domain-org-${suffix}`]
     )
     organizationId = org.rows[0].id
     const otherOrg = await pool.query(
       `INSERT INTO organizations (tenant_id, name, slug) VALUES ($1, 'Other Domain Org', $2) RETURNING id`,
-      [tenantId, `sis-domain-other-${suffix}`]
+      [tenantId, `sms-domain-other-${suffix}`]
     )
     otherOrganizationId = otherOrg.rows[0].id
 
@@ -99,17 +99,17 @@ describe('SIS academic domain (database)', () => {
     classId = cls.id
 
     const foreignClass = await pool.query(
-      `INSERT INTO sis_classes (organization_id, tenant_id, name) VALUES ($1, $2, $3) RETURNING id`,
+      `INSERT INTO sms_classes (organization_id, tenant_id, name) VALUES ($1, $2, $3) RETURNING id`,
       [otherOrganizationId, tenantId, 'Foreign Class']
     )
     foreignClassId = foreignClass.rows[0].id
     const foreignGrade = await pool.query(
-      `INSERT INTO sis_grades (organization_id, tenant_id, name) VALUES ($1, $2, 'Foreign Grade') RETURNING id`,
+      `INSERT INTO sms_grades (organization_id, tenant_id, name) VALUES ($1, $2, 'Foreign Grade') RETURNING id`,
       [otherOrganizationId, tenantId]
     )
     foreignGradeId = foreignGrade.rows[0].id
     const foreignSubject = await pool.query(
-      `INSERT INTO sis_subjects (organization_id, tenant_id, code, name) VALUES ($1, $2, 'FOR', 'Foreign Subject') RETURNING id`,
+      `INSERT INTO sms_subjects (organization_id, tenant_id, code, name) VALUES ($1, $2, 'FOR', 'Foreign Subject') RETURNING id`,
       [otherOrganizationId, tenantId]
     )
     foreignSubjectId = foreignSubject.rows[0].id
@@ -135,24 +135,24 @@ describe('SIS academic domain (database)', () => {
 
   afterAll(async () => {
     if (organizationId) {
-      await pool.query('DELETE FROM sis_student_guardians WHERE organization_id = $1', [organizationId])
-      await pool.query('DELETE FROM sis_guardians WHERE organization_id = $1', [organizationId])
-      await pool.query('DELETE FROM sis_enrollments WHERE organization_id = $1', [organizationId])
-      await pool.query('DELETE FROM sis_teacher_assignments WHERE organization_id = $1', [organizationId])
-      await pool.query('DELETE FROM sis_students WHERE organization_id = $1', [organizationId])
-      await pool.query('DELETE FROM sis_teachers WHERE organization_id = $1', [organizationId])
-      await pool.query('DELETE FROM sis_classes WHERE organization_id = $1', [organizationId])
-      await pool.query('DELETE FROM sis_terms WHERE organization_id = $1', [organizationId])
-      await pool.query('DELETE FROM sis_academic_years WHERE organization_id = $1', [organizationId])
-      await pool.query('DELETE FROM sis_grades WHERE organization_id = $1', [organizationId])
-      await pool.query('DELETE FROM sis_subjects WHERE organization_id = $1', [organizationId])
+      await pool.query('DELETE FROM sms_student_guardians WHERE organization_id = $1', [organizationId])
+      await pool.query('DELETE FROM sms_guardians WHERE organization_id = $1', [organizationId])
+      await pool.query('DELETE FROM sms_enrollments WHERE organization_id = $1', [organizationId])
+      await pool.query('DELETE FROM sms_teacher_assignments WHERE organization_id = $1', [organizationId])
+      await pool.query('DELETE FROM sms_students WHERE organization_id = $1', [organizationId])
+      await pool.query('DELETE FROM sms_teachers WHERE organization_id = $1', [organizationId])
+      await pool.query('DELETE FROM sms_classes WHERE organization_id = $1', [organizationId])
+      await pool.query('DELETE FROM sms_terms WHERE organization_id = $1', [organizationId])
+      await pool.query('DELETE FROM sms_academic_years WHERE organization_id = $1', [organizationId])
+      await pool.query('DELETE FROM sms_grades WHERE organization_id = $1', [organizationId])
+      await pool.query('DELETE FROM sms_subjects WHERE organization_id = $1', [organizationId])
       await pool.query('DELETE FROM audit_logs WHERE organization_id = $1', [organizationId])
       await pool.query('DELETE FROM organizations WHERE id = $1', [organizationId])
     }
     if (otherOrganizationId) {
-      await pool.query('DELETE FROM sis_subjects WHERE organization_id = $1', [otherOrganizationId])
-      await pool.query('DELETE FROM sis_grades WHERE organization_id = $1', [otherOrganizationId])
-      await pool.query('DELETE FROM sis_classes WHERE organization_id = $1', [otherOrganizationId])
+      await pool.query('DELETE FROM sms_subjects WHERE organization_id = $1', [otherOrganizationId])
+      await pool.query('DELETE FROM sms_grades WHERE organization_id = $1', [otherOrganizationId])
+      await pool.query('DELETE FROM sms_classes WHERE organization_id = $1', [otherOrganizationId])
       await pool.query('DELETE FROM organizations WHERE id = $1', [otherOrganizationId])
     }
     if (tenantId) await pool.query('DELETE FROM tenants WHERE id = $1', [tenantId])
@@ -161,7 +161,7 @@ describe('SIS academic domain (database)', () => {
 
   it('builds a relational academic structure', async () => {
     const cls = await pool.query(
-      `SELECT organization_id, academic_year_id, grade_id FROM sis_classes WHERE id = $1`,
+      `SELECT organization_id, academic_year_id, grade_id FROM sms_classes WHERE id = $1`,
       [classId]
     )
     expect(cls.rows[0]).toEqual({
@@ -170,7 +170,7 @@ describe('SIS academic domain (database)', () => {
       grade_id: gradeId
     })
     const term = await pool.query(
-      `SELECT academic_year_id FROM sis_terms WHERE id = $1`,
+      `SELECT academic_year_id FROM sms_terms WHERE id = $1`,
       [termId]
     )
     expect(term.rows[0].academic_year_id).toBe(academicYearId)
@@ -193,7 +193,7 @@ describe('SIS academic domain (database)', () => {
 
   it('enrolls students, keeps history and prevents duplicate active enrollments', async () => {
     const enrollment = await pool.query(
-      `SELECT student_id, class_id, academic_year_id, term_id, status FROM sis_enrollments WHERE id = $1`,
+      `SELECT student_id, class_id, academic_year_id, term_id, status FROM sms_enrollments WHERE id = $1`,
       [enrollmentId]
     )
     expect(enrollment.rows[0]).toEqual({
@@ -209,7 +209,7 @@ describe('SIS academic domain (database)', () => {
 
     await withdrawEnrollment(admin, enrollmentId)
     const withdrawn = await pool.query(
-      `SELECT status, ended_at FROM sis_enrollments WHERE id = $1`,
+      `SELECT status, ended_at FROM sms_enrollments WHERE id = $1`,
       [enrollmentId]
     )
     expect(withdrawn.rows[0].status).toBe('withdrawn')
@@ -220,9 +220,9 @@ describe('SIS academic domain (database)', () => {
     expect(again.status).toBe('active')
   })
 
-  it('records audit history for sensitive SIS changes', async () => {
+  it('records audit history for sensitive SMS changes', async () => {
     const audit = await pool.query(
-      `SELECT action, resource, module_id FROM audit_logs WHERE organization_id = $1 AND module_id = 'sis'`,
+      `SELECT action, resource, module_id FROM audit_logs WHERE organization_id = $1 AND module_id = 'sms'`,
       [organizationId]
     )
     for (const expected of [
@@ -233,14 +233,14 @@ describe('SIS academic domain (database)', () => {
       { action: 'enrollment.create', resource: 'enrollments' },
       { action: 'guardian.create', resource: 'guardians' }
     ]) {
-      expect(audit.rows).toContainEqual({ ...expected, module_id: 'sis' })
+      expect(audit.rows).toContainEqual({ ...expected, module_id: 'sms' })
     }
   })
 
   it('applies role-aware row scopes for teacher, student and guardian', async () => {
     const studentsMeta = getRegisteredTable('students')!.meta
     const enrollmentsMeta = getRegisteredTable('enrollments')!.meta
-    const asActor = (actor: SisActor): DataScopeActor => ({
+    const asActor = (actor: SmsActor): DataScopeActor => ({
       userId: actor.userId,
       roleName: actor.roleName ?? '',
       dataScope: 'all',
