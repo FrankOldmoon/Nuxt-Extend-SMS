@@ -181,7 +181,8 @@ export async function getStudent(actor: SmsActor, studentId: number) {
     studentNo: smsStudents.studentNo,
     classId: smsStudents.classId,
     userId: smsStudents.userId,
-    organizationId: smsStudents.organizationId
+    organizationId: smsStudents.organizationId,
+    status: smsStudents.status
   })
     .from(smsStudents)
     .where(and(...conditions))

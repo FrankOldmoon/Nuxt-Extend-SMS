@@ -602,6 +602,40 @@ export const smsTimetableEntries = pgTable(
 )
 
 /**
+ * 调课 / 代课登记：按具体日期覆盖某一节课的任课教师或教室。
+ * 课表本身仍按周维护，这里只记录某一天的实际调整，保留操作人便于追溯。
+ */
+export const smsTimetableSubstitutions = pgTable(
+  'sms_timetable_substitutions',
+  {
+    id: serial('id').primaryKey(),
+    organizationId: integer('organization_id').notNull(),
+    tenantId: integer('tenant_id'),
+    entryId: integer('entry_id').notNull(),
+    /** 生效日期（YYYY-MM-DD） */
+    date: date('date').notNull(),
+    /** substitute 代课 | reschedule 调课 */
+    type: varchar('type', { length: 20 }).notNull().default('substitute'),
+    originalTeacherUserId: integer('original_teacher_user_id'),
+    /** 代课教师；调课时可为空 */
+    substituteUserId: integer('substitute_user_id'),
+    /** 调整后的教室；为空表示沿用课表教室 */
+    room: varchar('room', { length: 40 }),
+    reason: varchar('reason', { length: 200 }),
+    createdBy: integer('created_by').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull()
+  },
+  table => ({
+    entryDateIdx: uniqueIndex('sms_timetable_substitutions_entry_date_idx')
+      .on(table.organizationId, table.entryId, table.date),
+    dateIdx: index('sms_timetable_substitutions_date_idx')
+      .on(table.organizationId, table.date),
+    substituteIdx: index('sms_timetable_substitutions_substitute_idx')
+      .on(table.organizationId, table.substituteUserId, table.date)
+  })
+)
+
+/**
  * Finance (Slice D): fee catalogue → invoices → payments → refunds.
  * Money is `numeric(12,2)`; refunds need a second approver. Nothing is
  * deleted — void/cancel statuses are used instead.

@@ -7,10 +7,14 @@ import {
   normalizeCycleStatus
 } from '../server/admissions'
 import {
+  detectSubstitutionConflicts,
   detectTimetableConflicts,
   normalizePeriodNo,
+  normalizeSubstitutionDate,
+  normalizeSubstitutionType,
   normalizeTimetableStatus,
-  normalizeWeekday
+  normalizeWeekday,
+  weekdayOfDate
 } from '../server/timetable'
 
 describe('admission workflow', () => {
@@ -80,5 +84,45 @@ describe('timetable normalisation and conflicts', () => {
     expect(detectTimetableConflicts(existing, {
       termId: 9, classId: 1, teacherUserId: 7, weekday: 2, periodNo: 1, room: 'A101'
     })).toEqual([])
+  })
+})
+
+describe('timetable substitutions', () => {
+  it('normalises type, date and weekday', () => {
+    expect(normalizeSubstitutionType(undefined)).toBe('substitute')
+    expect(normalizeSubstitutionType('reschedule')).toBe('reschedule')
+    expect(() => normalizeSubstitutionType('cancel')).toThrow(/type must be one of/)
+    expect(normalizeSubstitutionDate('2026-03-02')).toBe('2026-03-02')
+    expect(() => normalizeSubstitutionDate('2026-02-30')).toThrow(/valid calendar day/)
+    expect(() => normalizeSubstitutionDate('2026/03/02')).toThrow(/YYYY-MM-DD/)
+    expect(weekdayOfDate('2026-03-02')).toBe(1)
+    expect(weekdayOfDate('2026-03-08')).toBe(7)
+  })
+
+  it('flags duplicate registration and busy substitute teachers', () => {
+    const entries = [
+      { id: 1, termId: 9, classId: 1, teacherUserId: 7, weekday: 1, periodNo: 2, room: 'A101' },
+      { id: 2, termId: 9, classId: 2, teacherUserId: 8, weekday: 1, periodNo: 2, room: 'B201' }
+    ]
+    const existing = [
+      { entryId: 1, classId: 1, termId: 9, weekday: 1, periodNo: 2, date: '2026-03-02', substituteUserId: 9 }
+    ]
+    const candidate = {
+      entryId: 1,
+      classId: 1,
+      termId: 9,
+      weekday: 1,
+      periodNo: 2,
+      date: '2026-03-02',
+      substituteUserId: 9
+    }
+    expect(detectSubstitutionConflicts(entries, existing, candidate).map(item => item.type))
+      .toEqual(['duplicate'])
+
+    expect(detectSubstitutionConflicts(entries, [], { ...candidate, substituteUserId: 8 })
+      .map(item => item.type)).toEqual(['teacher'])
+
+    expect(detectSubstitutionConflicts(entries, [], { ...candidate, substituteUserId: 10 }))
+      .toEqual([])
   })
 })

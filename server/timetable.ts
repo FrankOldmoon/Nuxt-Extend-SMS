@@ -6,7 +6,7 @@
  * class slot (one subject per class/period), teacher slot (a teacher cannot be
  * in two classes at once) and room slot.
  */
-import { and, asc, eq, inArray, isNull, or } from 'drizzle-orm'
+import { and, asc, eq, gte, inArray, isNull, lte, or } from 'drizzle-orm'
 import { createError } from 'h3'
 import { db, writeAudit } from '../../../server/sdk'
 import {
@@ -16,7 +16,8 @@ import {
   smsTeachers,
   smsTeacherAssignments,
   smsTerms,
-  smsTimetableEntries
+  smsTimetableEntries,
+  smsTimetableSubstitutions
 } from './database/schema'
 import { canUseSms, isSmsAdmin, requireSmsOrganization, type SmsActor } from './context'
 import { assertSubjectInContext, assertTermInContext } from './academics'
@@ -50,6 +51,100 @@ export function normalizeTimetableStatus(value: unknown): TimetableStatus {
     return value as TimetableStatus
   }
   throw createError({ statusCode: 400, message: `status must be one of ${TIMETABLE_STATUSES.join(', ')}` })
+}
+
+export const SUBSTITUTION_TYPES = ['substitute', 'reschedule'] as const
+export type SubstitutionType = typeof SUBSTITUTION_TYPES[number]
+
+export function normalizeSubstitutionType(value: unknown): SubstitutionType {
+  if (value === undefined || value === null || value === '') return 'substitute'
+  if (typeof value === 'string' && (SUBSTITUTION_TYPES as readonly string[]).includes(value)) {
+    return value as SubstitutionType
+  }
+  throw createError({ statusCode: 400, message: `type must be one of ${SUBSTITUTION_TYPES.join(', ')}` })
+}
+
+/** 代课/调课按自然日生效，日期必须是合法的 YYYY-MM-DD。 */
+export function normalizeSubstitutionDate(value: unknown): string {
+  if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    throw createError({ statusCode: 400, message: 'date must be YYYY-MM-DD' })
+  }
+  const parsed = new Date(`${value}T00:00:00Z`)
+  if (Number.isNaN(parsed.getTime()) || parsed.toISOString().slice(0, 10) !== value) {
+    throw createError({ statusCode: 400, message: 'date is not a valid calendar day' })
+  }
+  return value
+}
+
+/** 1 = 周一 … 7 = 周日，与课表 weekday 保持一致。 */
+export function weekdayOfDate(value: string): number {
+  const day = new Date(`${value}T00:00:00Z`).getUTCDay()
+  return day === 0 ? 7 : day
+}
+
+export interface SubstitutionCandidate {
+  entryId: number
+  classId: number
+  termId: number | null
+  weekday: number
+  periodNo: number
+  date: string
+  substituteUserId: number | null
+}
+
+export interface SubstitutionRecord {
+  entryId: number
+  classId: number
+  termId: number | null
+  weekday: number
+  periodNo: number
+  date: string
+  substituteUserId: number | null
+}
+
+export interface SubstitutionConflict {
+  type: 'duplicate' | 'teacher'
+  entryId: number
+  classId: number
+}
+
+/**
+ * 调课/代课冲突（纯函数）：
+ * - duplicate：同一节课同一天已登记调整；
+ * - teacher：代课教师在同一时段已有其他班级的课或代课。
+ */
+export function detectSubstitutionConflicts(
+  entries: readonly TimetableSlot[],
+  existing: readonly SubstitutionRecord[],
+  candidate: SubstitutionCandidate
+): SubstitutionConflict[] {
+  const conflicts: SubstitutionConflict[] = []
+  for (const record of existing) {
+    if (record.date !== candidate.date) continue
+    if (record.entryId === candidate.entryId) {
+      conflicts.push({ type: 'duplicate', entryId: record.entryId, classId: record.classId })
+      continue
+    }
+    if (
+      candidate.substituteUserId !== null
+      && record.substituteUserId === candidate.substituteUserId
+      && (record.termId ?? null) === (candidate.termId ?? null)
+      && record.weekday === candidate.weekday
+      && record.periodNo === candidate.periodNo
+    ) {
+      conflicts.push({ type: 'teacher', entryId: record.entryId, classId: record.classId })
+    }
+  }
+  if (candidate.substituteUserId === null) return conflicts
+  for (const entry of entries) {
+    if (entry.classId === candidate.classId) continue
+    if ((entry.termId ?? null) !== (candidate.termId ?? null)) continue
+    if (entry.weekday !== candidate.weekday || entry.periodNo !== candidate.periodNo) continue
+    if (entry.teacherUserId === candidate.substituteUserId) {
+      conflicts.push({ type: 'teacher', entryId: entry.id ?? 0, classId: entry.classId })
+    }
+  }
+  return conflicts
 }
 
 export interface TimetableSlot {
@@ -376,5 +471,217 @@ export async function publishTimetable(actor: SmsActor, input: PublishTimetableI
       source: 'sms-service'
     })
     return { termId, classId, published: rows.length }
+  })
+}
+
+export interface SubstitutionListQuery {
+  entryId?: unknown
+  classId?: unknown
+  from?: unknown
+  to?: unknown
+  limit?: unknown
+}
+
+export async function listTimetableSubstitutions(actor: SmsActor, options: SubstitutionListQuery = {}) {
+  const organizationId = requireTimetableRead(actor)
+  const classIds = await scopedTimetableClassIds(actor)
+  const conditions = [eq(smsTimetableSubstitutions.organizationId, organizationId)]
+
+  const entryId = optionalId(options.entryId)
+  if (entryId) conditions.push(eq(smsTimetableSubstitutions.entryId, entryId))
+  const classId = optionalId(options.classId)
+  if (classId) conditions.push(eq(smsTimetableEntries.classId, classId))
+  if (classIds) {
+    conditions.push(classIds.length
+      ? inArray(smsTimetableEntries.classId, classIds)
+      : eq(smsTimetableEntries.id, -1))
+  }
+  if (typeof options.from === 'string' && options.from.trim()) {
+    conditions.push(gte(smsTimetableSubstitutions.date, normalizeSubstitutionDate(options.from)))
+  }
+  if (typeof options.to === 'string' && options.to.trim()) {
+    conditions.push(lte(smsTimetableSubstitutions.date, normalizeSubstitutionDate(options.to)))
+  }
+
+  const limit = Math.min(Math.max(Math.floor(Number(options.limit ?? 100) || 100), 1), 300)
+  const rows = await db.select({
+    id: smsTimetableSubstitutions.id,
+    entryId: smsTimetableSubstitutions.entryId,
+    date: smsTimetableSubstitutions.date,
+    type: smsTimetableSubstitutions.type,
+    originalTeacherUserId: smsTimetableSubstitutions.originalTeacherUserId,
+    substituteUserId: smsTimetableSubstitutions.substituteUserId,
+    room: smsTimetableSubstitutions.room,
+    reason: smsTimetableSubstitutions.reason,
+    createdAt: smsTimetableSubstitutions.createdAt,
+    classId: smsTimetableEntries.classId,
+    className: smsClasses.name,
+    subjectName: smsSubjects.name,
+    weekday: smsTimetableEntries.weekday,
+    periodNo: smsTimetableEntries.periodNo,
+    teacherName: smsTeachers.name
+  }).from(smsTimetableSubstitutions)
+    .innerJoin(smsTimetableEntries, and(
+      eq(smsTimetableEntries.id, smsTimetableSubstitutions.entryId),
+      eq(smsTimetableEntries.organizationId, organizationId)
+    ))
+    .leftJoin(smsClasses, eq(smsClasses.id, smsTimetableEntries.classId))
+    .leftJoin(smsSubjects, eq(smsSubjects.id, smsTimetableEntries.subjectId))
+    .leftJoin(smsTeachers, eq(smsTeachers.userId, smsTimetableEntries.teacherUserId))
+    .where(and(...conditions))
+    .orderBy(asc(smsTimetableSubstitutions.date), asc(smsTimetableEntries.periodNo))
+    .limit(limit)
+
+  const substituteIds = [...new Set(rows
+    .map(row => row.substituteUserId)
+    .filter((id): id is number => Number.isSafeInteger(id)))]
+  const names = substituteIds.length === 0
+    ? []
+    : await db.select({ userId: smsTeachers.userId, name: smsTeachers.name }).from(smsTeachers)
+        .where(and(
+          eq(smsTeachers.organizationId, organizationId),
+          inArray(smsTeachers.userId, substituteIds)
+        ))
+  const nameMap = new Map(names.map(row => [row.userId, row.name]))
+
+  return rows.map(row => ({
+    ...row,
+    substituteName: row.substituteUserId === null ? null : nameMap.get(row.substituteUserId) ?? null
+  }))
+}
+
+export interface CreateSubstitutionInput {
+  entryId?: unknown
+  date?: unknown
+  type?: unknown
+  substituteUserId?: unknown
+  room?: unknown
+  reason?: unknown
+}
+
+export async function createTimetableSubstitution(actor: SmsActor, input: CreateSubstitutionInput) {
+  const organizationId = requireTimetableUpdate(actor)
+  const entryId = positiveId(input.entryId, 'entryId')
+  const date = normalizeSubstitutionDate(input.date)
+  const type = normalizeSubstitutionType(input.type)
+  const substituteUserId = instant(input.substituteUserId)
+  if (type === 'substitute' && substituteUserId === null) {
+    throw createError({ statusCode: 400, message: '代课必须选择代课教师' })
+  }
+  const room = typeof input.room === 'string' && input.room.trim() ? input.room.trim().slice(0, 40) : null
+  const reason = typeof input.reason === 'string' && input.reason.trim() ? input.reason.trim().slice(0, 200) : null
+
+  const classIds = await scopedTimetableClassIds(actor)
+  const entryConditions = [
+    eq(smsTimetableEntries.id, entryId),
+    eq(smsTimetableEntries.organizationId, organizationId)
+  ]
+  if (classIds) {
+    if (classIds.length === 0) throw createError({ statusCode: 404, message: 'Timetable entry not found' })
+    entryConditions.push(inArray(smsTimetableEntries.classId, classIds))
+  }
+  const [entry] = await db.select({
+    id: smsTimetableEntries.id,
+    termId: smsTimetableEntries.termId,
+    classId: smsTimetableEntries.classId,
+    teacherUserId: smsTimetableEntries.teacherUserId,
+    weekday: smsTimetableEntries.weekday,
+    periodNo: smsTimetableEntries.periodNo
+  }).from(smsTimetableEntries)
+    .where(and(...entryConditions))
+    .limit(1)
+  if (!entry) throw createError({ statusCode: 404, message: 'Timetable entry not found' })
+
+  if (weekdayOfDate(date) !== entry.weekday) {
+    throw createError({ statusCode: 400, message: 'date 与课表星期不一致' })
+  }
+
+  if (substituteUserId !== null) {
+    const [teacher] = await db.select({ userId: smsTeachers.userId }).from(smsTeachers)
+      .where(and(
+        eq(smsTeachers.organizationId, organizationId),
+        eq(smsTeachers.userId, substituteUserId),
+        isNull(smsTeachers.deletedAt)
+      ))
+      .limit(1)
+    if (!teacher) throw createError({ statusCode: 400, message: '代课教师不存在' })
+  }
+
+  const slotEntries = await db.select({
+    id: smsTimetableEntries.id,
+    termId: smsTimetableEntries.termId,
+    classId: smsTimetableEntries.classId,
+    teacherUserId: smsTimetableEntries.teacherUserId,
+    weekday: smsTimetableEntries.weekday,
+    periodNo: smsTimetableEntries.periodNo,
+    room: smsTimetableEntries.room
+  }).from(smsTimetableEntries)
+    .where(and(
+      eq(smsTimetableEntries.organizationId, organizationId),
+      eq(smsTimetableEntries.weekday, entry.weekday),
+      eq(smsTimetableEntries.periodNo, entry.periodNo)
+    ))
+
+  const existing = await db.select({
+    entryId: smsTimetableSubstitutions.entryId,
+    date: smsTimetableSubstitutions.date,
+    substituteUserId: smsTimetableSubstitutions.substituteUserId,
+    classId: smsTimetableEntries.classId,
+    termId: smsTimetableEntries.termId,
+    weekday: smsTimetableEntries.weekday,
+    periodNo: smsTimetableEntries.periodNo
+  }).from(smsTimetableSubstitutions)
+    .innerJoin(smsTimetableEntries, and(
+      eq(smsTimetableEntries.id, smsTimetableSubstitutions.entryId),
+      eq(smsTimetableEntries.organizationId, organizationId)
+    ))
+    .where(and(
+      eq(smsTimetableSubstitutions.organizationId, organizationId),
+      eq(smsTimetableSubstitutions.date, date)
+    ))
+
+  const conflicts = detectSubstitutionConflicts(slotEntries, existing, {
+    entryId,
+    classId: entry.classId,
+    termId: entry.termId,
+    weekday: entry.weekday,
+    periodNo: entry.periodNo,
+    date,
+    substituteUserId
+  })
+  if (conflicts.length > 0) {
+    throw createError({
+      statusCode: 409,
+      message: `Substitution conflict: ${conflicts.map(item => item.type).join(', ')}`,
+      data: { conflicts }
+    })
+  }
+
+  return await db.transaction(async (tx) => {
+    const [row] = await tx.insert(smsTimetableSubstitutions).values({
+      organizationId,
+      tenantId: actor.tenantId ?? null,
+      entryId,
+      date,
+      type,
+      originalTeacherUserId: entry.teacherUserId,
+      substituteUserId,
+      room,
+      reason,
+      createdBy: actor.userId
+    }).returning()
+    if (!row) throw createError({ statusCode: 500, message: 'Failed to create substitution' })
+    await writeAudit(tx, {
+      actorUserId: actor.userId,
+      tenantId: actor.tenantId ?? undefined,
+      organizationId,
+      moduleId: 'sms',
+      action: 'timetable.substitution.create',
+      resource: 'timetable',
+      recordId: row.id,
+      after: { entryId, date, type, substituteUserId, room },
+      source: 'sms-service'
+    })
+    return row
   })
 }

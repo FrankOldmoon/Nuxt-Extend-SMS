@@ -1039,5 +1039,34 @@ export const smsMigrations: ModuleMigration[] = [
           ON sms_notifications (organization_id, recipient_user_id, requires_ack, acknowledged_at);
       `)
     }
+  },
+  {
+    id: 'sms:023-timetable-substitutions',
+    checksum: '1',
+    async up(executor) {
+      const client = executor as SqlExecutor
+      await client.query(`
+        CREATE TABLE IF NOT EXISTS sms_timetable_substitutions (
+          id                         serial PRIMARY KEY,
+          organization_id            integer NOT NULL,
+          tenant_id                  integer,
+          entry_id                   integer NOT NULL,
+          date                       date NOT NULL,
+          type                       varchar(20) NOT NULL DEFAULT 'substitute',
+          original_teacher_user_id   integer,
+          substitute_user_id         integer,
+          room                       varchar(40),
+          reason                     varchar(200),
+          created_by                 integer NOT NULL,
+          created_at                 timestamptz NOT NULL DEFAULT now()
+        );
+        CREATE UNIQUE INDEX IF NOT EXISTS sms_timetable_substitutions_entry_date_idx
+          ON sms_timetable_substitutions (organization_id, entry_id, date);
+        CREATE INDEX IF NOT EXISTS sms_timetable_substitutions_date_idx
+          ON sms_timetable_substitutions (organization_id, date);
+        CREATE INDEX IF NOT EXISTS sms_timetable_substitutions_substitute_idx
+          ON sms_timetable_substitutions (organization_id, substitute_user_id, date);
+      `)
+    }
   }
 ]

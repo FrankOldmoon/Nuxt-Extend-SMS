@@ -61,7 +61,9 @@ import {
 import {
   canPublishTimetable,
   createTimetableEntry,
+  createTimetableSubstitution,
   listTimetable,
+  listTimetableSubstitutions,
   publishTimetable
 } from './server/timetable'
 import {
@@ -960,6 +962,24 @@ const smsApis: ModuleApiDefinition<SmsActor>[] = [
     schema: isRecord,
     authorize: actor => canPublishTimetable(actor),
     handler: (_event, actor, input) => publishTimetable(actor, isRecord(input) ? input : {})
+  },
+  {
+    id: 'sms.timetable.substitutions.list',
+    moduleId: 'sms',
+    method: 'GET',
+    path: 'sms/timetable/substitutions',
+    schema: isRecord,
+    authorize: actor => canUseSms(actor, 'read', 'timetable'),
+    handler: (_event, actor, input) => listTimetableSubstitutions(actor, isRecord(input) ? input : {})
+  },
+  {
+    id: 'sms.timetable.substitutions.create',
+    moduleId: 'sms',
+    method: 'POST',
+    path: 'sms/timetable/substitutions',
+    schema: isRecord,
+    authorize: actor => canUseSms(actor, 'update', 'timetable'),
+    handler: (_event, actor, input) => createTimetableSubstitution(actor, input as Record<string, unknown>)
   },
   {
     id: 'sms.fees.list',
