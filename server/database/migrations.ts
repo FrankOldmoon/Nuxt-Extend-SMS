@@ -1068,5 +1068,35 @@ export const smsMigrations: ModuleMigration[] = [
           ON sms_timetable_substitutions (organization_id, substitute_user_id, date);
       `)
     }
+  },
+  {
+    id: 'sms:024-exam-sessions',
+    checksum: '1',
+    async up(executor) {
+      const client = executor as SqlExecutor
+      await client.query(`
+        CREATE TABLE IF NOT EXISTS sms_exam_sessions (
+          id                            serial PRIMARY KEY,
+          organization_id               integer NOT NULL,
+          tenant_id                     integer,
+          exam_id                       integer NOT NULL,
+          room                          varchar(60) NOT NULL,
+          starts_at                     timestamptz NOT NULL,
+          ends_at                       timestamptz NOT NULL,
+          invigilator_user_id           integer NOT NULL,
+          assistant_invigilator_user_id integer,
+          status                        varchar(20) NOT NULL DEFAULT 'scheduled',
+          created_by                    integer NOT NULL,
+          created_at                    timestamptz NOT NULL DEFAULT now(),
+          updated_at                    timestamptz NOT NULL DEFAULT now()
+        );
+        CREATE INDEX IF NOT EXISTS sms_exam_sessions_exam_idx
+          ON sms_exam_sessions (organization_id, exam_id, starts_at);
+        CREATE INDEX IF NOT EXISTS sms_exam_sessions_window_idx
+          ON sms_exam_sessions (organization_id, starts_at, ends_at);
+        CREATE INDEX IF NOT EXISTS sms_exam_sessions_invigilator_idx
+          ON sms_exam_sessions (organization_id, invigilator_user_id, starts_at);
+      `)
+    }
   }
 ]

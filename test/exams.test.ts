@@ -2,12 +2,14 @@ import { describe, expect, it } from 'vitest'
 import {
   EXAM_TYPES,
   computeAverage,
+  detectExamSessionConflicts,
   normalizeExamDate,
   normalizeExamStatus,
   normalizeExamType,
   normalizeFullScore,
   normalizeScoreEntries,
-  normalizeScoreValue
+  normalizeScoreValue,
+  normalizeSessionTime
 } from '../server/exams'
 
 describe('exam normalisation', () => {
@@ -36,6 +38,68 @@ describe('exam normalisation', () => {
     expect(normalizeScoreValue('', 100)).toBeNull()
     expect(() => normalizeScoreValue(120, 100)).toThrow(/between 0 and 100/)
     expect(normalizeScoreValue(120, 100, true)).toBeNull()
+  })
+})
+
+describe('exam session conflicts', () => {
+  const at = (value: string) => new Date(value)
+
+  it('parses ISO timestamps and rejects invalid input', () => {
+    expect(normalizeSessionTime('2026-06-20T09:00:00.000Z', 'startsAt').toISOString())
+      .toBe('2026-06-20T09:00:00.000Z')
+    expect(() => normalizeSessionTime('', 'startsAt')).toThrow(/不能为空/)
+    expect(() => normalizeSessionTime('not-a-date', 'startsAt')).toThrow(/不是合法时间/)
+  })
+
+  it('detects overlapping exam, room and invigilator slots', () => {
+    const existing = [{
+      id: 1,
+      examId: 10,
+      room: 'A101',
+      startsAt: at('2026-06-20T09:00:00Z'),
+      endsAt: at('2026-06-20T11:00:00Z'),
+      invigilatorUserId: 7,
+      assistantInvigilatorUserId: 8 as number | null
+    }]
+    const candidate = {
+      examId: 10,
+      room: 'A101',
+      startsAt: at('2026-06-20T10:00:00Z'),
+      endsAt: at('2026-06-20T12:00:00Z'),
+      invigilatorUserId: 9 as number,
+      assistantInvigilatorUserId: 8 as number | null
+    }
+    expect(detectExamSessionConflicts(existing, candidate).map(item => item.type).sort())
+      .toEqual(['exam', 'invigilator', 'room'])
+  })
+
+  it('treats back-to-back sessions as free and ignores itself', () => {
+    const existing = [{
+      id: 1,
+      examId: 10,
+      room: 'A101',
+      startsAt: at('2026-06-20T09:00:00Z'),
+      endsAt: at('2026-06-20T11:00:00Z'),
+      invigilatorUserId: 7,
+      assistantInvigilatorUserId: null
+    }]
+    expect(detectExamSessionConflicts(existing, {
+      examId: 11,
+      room: 'A101',
+      startsAt: at('2026-06-20T11:00:00Z'),
+      endsAt: at('2026-06-20T12:00:00Z'),
+      invigilatorUserId: 7,
+      assistantInvigilatorUserId: null
+    })).toEqual([])
+    expect(detectExamSessionConflicts(existing, {
+      id: 1,
+      examId: 10,
+      room: 'A101',
+      startsAt: at('2026-06-20T09:30:00Z'),
+      endsAt: at('2026-06-20T10:30:00Z'),
+      invigilatorUserId: 7,
+      assistantInvigilatorUserId: null
+    })).toEqual([])
   })
 })
 

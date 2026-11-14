@@ -432,6 +432,35 @@ export const smsExams = pgTable(
   })
 )
 
+/** 考试场次：考场、时段与监考教师；同一房间/监考教师时段不可重叠。 */
+export const smsExamSessions = pgTable(
+  'sms_exam_sessions',
+  {
+    id: serial('id').primaryKey(),
+    organizationId: integer('organization_id').notNull(),
+    tenantId: integer('tenant_id'),
+    examId: integer('exam_id').notNull(),
+    room: varchar('room', { length: 60 }).notNull(),
+    startsAt: timestamp('starts_at', { withTimezone: true }).notNull(),
+    endsAt: timestamp('ends_at', { withTimezone: true }).notNull(),
+    invigilatorUserId: integer('invigilator_user_id').notNull(),
+    assistantInvigilatorUserId: integer('assistant_invigilator_user_id'),
+    /** scheduled | cancelled */
+    status: varchar('status', { length: 20 }).notNull().default('scheduled'),
+    createdBy: integer('created_by').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull()
+  },
+  table => ({
+    examIdx: index('sms_exam_sessions_exam_idx')
+      .on(table.organizationId, table.examId, table.startsAt),
+    windowIdx: index('sms_exam_sessions_window_idx')
+      .on(table.organizationId, table.startsAt, table.endsAt),
+    invigilatorIdx: index('sms_exam_sessions_invigilator_idx')
+      .on(table.organizationId, table.invigilatorUserId, table.startsAt)
+  })
+)
+
 /** One score row per exam × student; corrections keep a revision trail. */
 export const smsExamScores = pgTable(
   'sms_exam_scores',

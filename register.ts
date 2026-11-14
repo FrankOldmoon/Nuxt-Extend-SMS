@@ -40,9 +40,12 @@ import {
 import {
   canGenerateReportCard,
   canPublishScores,
+  cancelExamSession,
   createExam,
+  createExamSession,
   generateReportCard,
   getScoreSheet,
+  listExamSessions,
   listExams,
   listScores,
   publishExam,
@@ -825,6 +828,33 @@ const smsApis: ModuleApiDefinition<SmsActor>[] = [
     schema: isRecord,
     authorize: actor => canUseSms(actor, 'create', 'exams'),
     handler: (_event, actor, input) => createExam(actor, input as Record<string, unknown>)
+  },
+  {
+    id: 'sms.exams.sessions.list',
+    moduleId: 'sms',
+    method: 'GET',
+    path: 'sms/exams/sessions',
+    schema: isRecord,
+    authorize: actor => canUseSms(actor, 'read', 'scores'),
+    handler: (_event, actor, input) => listExamSessions(actor, isRecord(input) ? input : {})
+  },
+  {
+    id: 'sms.exams.sessions.create',
+    moduleId: 'sms',
+    method: 'POST',
+    path: 'sms/exams/sessions',
+    schema: isRecord,
+    authorize: actor => canUseSms(actor, 'create', 'exams'),
+    handler: (_event, actor, input) => createExamSession(actor, input as Record<string, unknown>)
+  },
+  {
+    id: 'sms.exams.sessions.cancel',
+    moduleId: 'sms',
+    method: 'POST',
+    path: 'sms/exams/sessions/cancel',
+    schema: isRecord,
+    authorize: actor => canUseSms(actor, 'create', 'exams'),
+    handler: (_event, actor, input) => cancelExamSession(actor, Number((input as Record<string, unknown>).sessionId))
   },
   {
     id: 'sms.scores.sheet',

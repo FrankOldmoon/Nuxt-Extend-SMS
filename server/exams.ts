@@ -10,17 +10,19 @@
  * immutable `sms_score_revisions` row. Publishing is a high-risk, second-person
  * capability and freezes the exam.
  */
-import { and, asc, desc, eq, ilike, inArray, isNull, or, sql } from 'drizzle-orm'
+import { and, asc, desc, eq, gt, ilike, inArray, isNull, lt, or, sql } from 'drizzle-orm'
 import { createError } from 'h3'
 import { db, writeAudit } from '../../../server/sdk'
 import {
   smsClasses,
   smsExamScores,
+  smsExamSessions,
   smsExams,
   smsReportCards,
   smsScoreRevisions,
   smsStudents,
   smsSubjects,
+  smsTeachers,
   smsTeacherAssignments,
   smsTerms
 } from './database/schema'
@@ -414,6 +416,298 @@ export async function createExam(actor: SmsActor, input: CreateExamInput) {
     })
     return { ...row, fullScore: Number(row.fullScore) }
   })
+}
+
+// ---------------------------------------------------------------------------
+// Exam sessions (rooms & invigilation)
+// ---------------------------------------------------------------------------
+
+export function normalizeSessionTime(value: unknown, field: string): Date {
+  if (typeof value !== 'string' || !value.trim()) {
+    throw createError({ statusCode: 400, message: `${field} 不能为空` })
+  }
+  const parsed = new Date(value)
+  if (Number.isNaN(parsed.getTime())) {
+    throw createError({ statusCode: 400, message: `${field} 不是合法时间` })
+  }
+  return parsed
+}
+
+export interface ExamSessionWindow {
+  id?: number
+  examId: number
+  room: string
+  startsAt: Date
+  endsAt: Date
+  invigilatorUserId: number
+  assistantInvigilatorUserId: number | null
+}
+
+export interface ExamSessionConflict {
+  type: 'exam' | 'room' | 'invigilator'
+  sessionId: number
+}
+
+/**
+ * 场次冲突（纯函数）：同一考试、同一考场、同一监考教师的时间段不可重叠。
+ * 采用半开区间 `[start, end)`，首尾相接不算冲突。
+ */
+export function detectExamSessionConflicts(
+  existing: readonly ExamSessionWindow[],
+  candidate: ExamSessionWindow
+): ExamSessionConflict[] {
+  const conflicts: ExamSessionConflict[] = []
+  for (const row of existing) {
+    if (row.id !== undefined && candidate.id !== undefined && row.id === candidate.id) continue
+    const overlaps = row.startsAt.getTime() < candidate.endsAt.getTime()
+      && row.endsAt.getTime() > candidate.startsAt.getTime()
+    if (!overlaps) continue
+    const sessionId = row.id ?? 0
+    if (row.examId === candidate.examId) conflicts.push({ type: 'exam', sessionId })
+    if (row.room === candidate.room) conflicts.push({ type: 'room', sessionId })
+    const candidateTeachers = [candidate.invigilatorUserId, candidate.assistantInvigilatorUserId]
+      .filter((id): id is number => id !== null)
+    const rowTeachers = [row.invigilatorUserId, row.assistantInvigilatorUserId]
+      .filter((id): id is number => id !== null)
+    if (candidateTeachers.some(id => rowTeachers.includes(id))) {
+      conflicts.push({ type: 'invigilator', sessionId })
+    }
+  }
+  return conflicts
+}
+
+async function assertTeachersExist(organizationId: number, userIds: number[]): Promise<void> {
+  if (userIds.length === 0) return
+  const rows = await db.select({ userId: smsTeachers.userId }).from(smsTeachers)
+    .where(and(
+      eq(smsTeachers.organizationId, organizationId),
+      inArray(smsTeachers.userId, userIds),
+      isNull(smsTeachers.deletedAt)
+    ))
+  const found = new Set(rows.map(row => row.userId))
+  if (userIds.some(id => !found.has(id))) {
+    throw createError({ statusCode: 400, message: '监考教师不存在' })
+  }
+}
+
+export interface ExamSessionListQuery {
+  examId?: unknown
+  classId?: unknown
+  status?: unknown
+  from?: unknown
+  to?: unknown
+  limit?: unknown
+}
+
+export async function listExamSessions(actor: SmsActor, options: ExamSessionListQuery = {}) {
+  const organizationId = requireScoreRead(actor)
+  const classIds = await scopedExamClassIds(actor)
+  const conditions = [eq(smsExamSessions.organizationId, organizationId)]
+  if (classIds) {
+    conditions.push(classIds.length
+      ? inArray(smsExams.classId, classIds)
+      : eq(smsExams.id, -1))
+  }
+  if (isStudentFacing(actor)) {
+    conditions.push(eq(smsExams.status, 'published'))
+    conditions.push(eq(smsExamSessions.status, 'scheduled'))
+  }
+  const examId = optionalId(options.examId)
+  if (examId) conditions.push(eq(smsExamSessions.examId, examId))
+  const classId = optionalId(options.classId)
+  if (classId) conditions.push(eq(smsExams.classId, classId))
+  if (options.status === 'scheduled' || options.status === 'cancelled') {
+    conditions.push(eq(smsExamSessions.status, options.status))
+  }
+  if (typeof options.from === 'string' && options.from.trim()) {
+    conditions.push(gt(smsExamSessions.startsAt, normalizeSessionTime(options.from, 'from')))
+  }
+  if (typeof options.to === 'string' && options.to.trim()) {
+    conditions.push(lt(smsExamSessions.startsAt, normalizeSessionTime(options.to, 'to')))
+  }
+
+  const limit = Math.min(Math.max(Math.floor(Number(options.limit ?? 100) || 100), 1), 300)
+  const rows = await db.select({
+    id: smsExamSessions.id,
+    examId: smsExamSessions.examId,
+    examName: smsExams.name,
+    examDate: smsExams.examDate,
+    examStatus: smsExams.status,
+    classId: smsExams.classId,
+    className: smsClasses.name,
+    subjectName: smsSubjects.name,
+    room: smsExamSessions.room,
+    startsAt: smsExamSessions.startsAt,
+    endsAt: smsExamSessions.endsAt,
+    invigilatorUserId: smsExamSessions.invigilatorUserId,
+    assistantInvigilatorUserId: smsExamSessions.assistantInvigilatorUserId,
+    status: smsExamSessions.status,
+    createdAt: smsExamSessions.createdAt
+  }).from(smsExamSessions)
+    .innerJoin(smsExams, and(
+      eq(smsExams.id, smsExamSessions.examId),
+      eq(smsExams.organizationId, organizationId)
+    ))
+    .leftJoin(smsClasses, eq(smsClasses.id, smsExams.classId))
+    .leftJoin(smsSubjects, eq(smsSubjects.id, smsExams.subjectId))
+    .where(and(...conditions))
+    .orderBy(asc(smsExamSessions.startsAt))
+    .limit(limit)
+
+  const teacherIds = [...new Set(rows.flatMap(row => [row.invigilatorUserId, row.assistantInvigilatorUserId])
+    .filter((id): id is number => id !== null))]
+  const names = teacherIds.length === 0
+    ? []
+    : await db.select({ userId: smsTeachers.userId, name: smsTeachers.name }).from(smsTeachers)
+        .where(and(
+          eq(smsTeachers.organizationId, organizationId),
+          inArray(smsTeachers.userId, teacherIds)
+        ))
+  const nameMap = new Map(names.map(row => [row.userId, row.name]))
+
+  return rows.map(row => ({
+    ...row,
+    invigilatorName: nameMap.get(row.invigilatorUserId) ?? null,
+    assistantInvigilatorName: row.assistantInvigilatorUserId === null
+      ? null
+      : nameMap.get(row.assistantInvigilatorUserId) ?? null
+  }))
+}
+
+export interface CreateExamSessionInput {
+  examId?: unknown
+  room?: unknown
+  startsAt?: unknown
+  endsAt?: unknown
+  invigilatorUserId?: unknown
+  assistantInvigilatorUserId?: unknown
+}
+
+export async function createExamSession(actor: SmsActor, input: CreateExamSessionInput) {
+  const organizationId = requireExamCreate(actor)
+  const examId = positiveId(input.examId, 'examId')
+  const [exam] = await db.select({ id: smsExams.id, classId: smsExams.classId }).from(smsExams)
+    .where(and(eq(smsExams.id, examId), eq(smsExams.organizationId, organizationId)))
+    .limit(1)
+  if (!exam) throw createError({ statusCode: 404, message: 'Exam not found' })
+  await assertClassInExamScope(actor, organizationId, exam.classId)
+
+  const room = typeof input.room === 'string' ? input.room.trim().slice(0, 60) : ''
+  if (!room) throw createError({ statusCode: 400, message: 'room 不能为空' })
+  const startsAt = normalizeSessionTime(input.startsAt, 'startsAt')
+  const endsAt = normalizeSessionTime(input.endsAt, 'endsAt')
+  if (endsAt.getTime() <= startsAt.getTime()) {
+    throw createError({ statusCode: 400, message: 'endsAt 必须晚于 startsAt' })
+  }
+  const invigilatorUserId = positiveId(input.invigilatorUserId, 'invigilatorUserId')
+  const assistantInvigilatorUserId = optionalId(input.assistantInvigilatorUserId)
+  if (assistantInvigilatorUserId === invigilatorUserId) {
+    throw createError({ statusCode: 400, message: '辅助监考不能与主监考相同' })
+  }
+  await assertTeachersExist(organizationId, [invigilatorUserId, assistantInvigilatorUserId]
+    .filter((id): id is number => id !== null))
+
+  const existing = await db.select({
+    id: smsExamSessions.id,
+    examId: smsExamSessions.examId,
+    room: smsExamSessions.room,
+    startsAt: smsExamSessions.startsAt,
+    endsAt: smsExamSessions.endsAt,
+    invigilatorUserId: smsExamSessions.invigilatorUserId,
+    assistantInvigilatorUserId: smsExamSessions.assistantInvigilatorUserId
+  }).from(smsExamSessions)
+    .where(and(
+      eq(smsExamSessions.organizationId, organizationId),
+      eq(smsExamSessions.status, 'scheduled'),
+      lt(smsExamSessions.startsAt, endsAt),
+      gt(smsExamSessions.endsAt, startsAt)
+    ))
+
+  const conflicts = detectExamSessionConflicts(existing, {
+    examId,
+    room,
+    startsAt,
+    endsAt,
+    invigilatorUserId,
+    assistantInvigilatorUserId
+  })
+  if (conflicts.length > 0) {
+    throw createError({
+      statusCode: 409,
+      message: `Exam session conflict: ${conflicts.map(item => item.type).join(', ')}`,
+      data: { conflicts }
+    })
+  }
+
+  return await db.transaction(async (tx) => {
+    const [row] = await tx.insert(smsExamSessions).values({
+      organizationId,
+      tenantId: actor.tenantId ?? null,
+      examId,
+      room,
+      startsAt,
+      endsAt,
+      invigilatorUserId,
+      assistantInvigilatorUserId,
+      createdBy: actor.userId
+    }).returning()
+    if (!row) throw createError({ statusCode: 500, message: 'Failed to create exam session' })
+    await writeAudit(tx, {
+      actorUserId: actor.userId,
+      tenantId: actor.tenantId ?? undefined,
+      organizationId,
+      moduleId: 'sms',
+      action: 'exam.session.create',
+      resource: 'exams',
+      recordId: row.id,
+      after: { examId, room, startsAt, endsAt, invigilatorUserId, assistantInvigilatorUserId },
+      source: 'sms-service'
+    })
+    return row
+  })
+}
+
+export async function cancelExamSession(actor: SmsActor, sessionId: number) {
+  const organizationId = requireExamCreate(actor)
+  const id = positiveId(sessionId, 'sessionId')
+  const [row] = await db.select({
+    id: smsExamSessions.id,
+    status: smsExamSessions.status,
+    classId: smsExams.classId
+  }).from(smsExamSessions)
+    .innerJoin(smsExams, and(
+      eq(smsExams.id, smsExamSessions.examId),
+      eq(smsExams.organizationId, organizationId)
+    ))
+    .where(and(
+      eq(smsExamSessions.id, id),
+      eq(smsExamSessions.organizationId, organizationId)
+    ))
+    .limit(1)
+  if (!row) throw createError({ statusCode: 404, message: 'Exam session not found' })
+  await assertClassInExamScope(actor, organizationId, row.classId)
+  if (row.status === 'cancelled') return { id, status: 'cancelled' as const }
+
+  await db.transaction(async (tx) => {
+    await tx.update(smsExamSessions)
+      .set({ status: 'cancelled', updatedAt: new Date() })
+      .where(and(
+        eq(smsExamSessions.id, id),
+        eq(smsExamSessions.organizationId, organizationId)
+      ))
+    await writeAudit(tx, {
+      actorUserId: actor.userId,
+      tenantId: actor.tenantId ?? undefined,
+      organizationId,
+      moduleId: 'sms',
+      action: 'exam.session.cancel',
+      resource: 'exams',
+      recordId: id,
+      after: { status: 'cancelled' },
+      source: 'sms-service'
+    })
+  })
+  return { id, status: 'cancelled' as const }
 }
 
 // ---------------------------------------------------------------------------
