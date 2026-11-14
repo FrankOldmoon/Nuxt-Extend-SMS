@@ -234,7 +234,8 @@ const studentSearch: Capability = {
     type: 'object',
     properties: {
       query: { type: 'string', description: '姓名或学号片段' },
-      limit: { type: 'integer', minimum: 1, maximum: 200 }
+      limit: { type: 'integer', minimum: 1, maximum: 200 },
+      cursor: { type: 'integer', minimum: 1, description: '上一页最后一行的 id' }
     },
     additionalProperties: false
   },
@@ -243,7 +244,8 @@ const studentSearch: Capability = {
     const args = isRecord(input) ? input : {}
     return searchStudents(actor, {
       query: typeof args.query === 'string' ? args.query : undefined,
-      limit: typeof args.limit === 'number' ? args.limit : undefined
+      limit: typeof args.limit === 'number' ? args.limit : undefined,
+      cursor: typeof args.cursor === 'number' ? args.cursor : undefined
     })
   },
   summarize: rows => listSummary('学生', rows),
@@ -4385,7 +4387,9 @@ const assignmentsSubmit: Capability = {
     type: 'object',
     properties: {
       assignmentId: { type: 'integer', minimum: 1 },
-      content: { type: 'string' }
+      content: { type: 'string' },
+      attachmentUrl: { type: 'string', maxLength: 500 },
+      attachmentFileId: { type: 'integer', minimum: 1 }
     },
     required: ['assignmentId'],
     additionalProperties: false

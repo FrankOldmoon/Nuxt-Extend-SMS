@@ -21,6 +21,7 @@ import {
 import { canUseSms, isSmsAdmin, requireSmsOrganization, type SmsActor } from './context'
 import { scopedClassIds as scopedAttendanceClassIds } from './attendance'
 import { scopedExamClassIds } from './exams'
+import { smsDateString } from './time'
 
 export const REPORT_TYPES = ['attendance', 'scores', 'finance'] as const
 export type ReportType = typeof REPORT_TYPES[number]
@@ -85,8 +86,7 @@ export function canExportReports(actor: SmsActor): boolean {
 }
 
 function defaultRange(from: unknown, to: unknown): { from: string, to: string } {
-  const today = new Date()
-  const end = normalizeReportDate(to, today.toISOString().slice(0, 10), 'to')
+  const end = normalizeReportDate(to, smsDateString(), 'to')
   const start = new Date(Date.parse(`${end}T00:00:00Z`) - 29 * DAY_MS)
   return {
     from: normalizeReportDate(from, start.toISOString().slice(0, 10), 'from'),

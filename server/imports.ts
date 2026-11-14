@@ -13,6 +13,7 @@ import { smsClasses, smsStudents } from './database/schema'
 import { assignedClassIds } from './students'
 import { isSmsAdmin, canUseSms, requireSmsOrganization, type SmsActor } from './context'
 import { saveScores } from './exams'
+import { enqueueBackgroundJob, snapshotActor } from './jobQueue'
 
 export const IMPORT_MAX_ROWS = 500
 export const IMPORT_MAX_BYTES = 200_000
@@ -120,8 +121,14 @@ function newBatchId(value: unknown): string {
   return globalThis.crypto?.randomUUID?.() ?? `batch-${Date.now()}-${Math.random().toString(16).slice(2)}`
 }
 
+/**
+ * CSV 单元格转义。
+ * 除引号/逗号/换行外，还要防公式注入：以 `= + - @`、制表符或回车开头的
+ * 内容在 Excel 中会被当作公式执行，前置单引号把它固定为文本。
+ */
 function escapeCsv(value: string): string {
-  return /[",\n]/.test(value) ? `"${value.replace(/"/g, '""')}"` : value
+  const guarded = /^[=+\-@\t\r]/.test(value) ? `'${value}` : value
+  return /[",\n]/.test(guarded) ? `"${guarded.replace(/"/g, '""')}"` : guarded
 }
 
 /** 错误文件：只包含无效行，便于操作员直接修改后重传。 */
@@ -151,11 +158,20 @@ async function importableClassIds(actor: SmsActor): Promise<Set<number>> {
 
 export async function importStudentsCsv(
   actor: SmsActor,
-  input: { csv?: unknown, dryRun?: unknown, batchId?: unknown }
-): Promise<StudentImportResult> {
+  input: { csv?: unknown, dryRun?: unknown, batchId?: unknown, defer?: unknown }
+): Promise<StudentImportResult | { queued: true, jobId: number }> {
   const organizationId = requireSmsOrganization(actor)
   if (!canUseSms(actor, 'create', 'students')) {
     throw createError({ statusCode: 403, statusMessage: 'Forbidden', message: 'No permission to import students' })
+  }
+  // defer=true 时只入队，由 sms:job-worker 执行；dryRun 仍同步返回校验结果。
+  if (input.defer === true && input.dryRun !== true) {
+    const job = await enqueueBackgroundJob(
+      'student-import',
+      { actor: snapshotActor(actor), input: { ...input, defer: false } },
+      organizationId
+    )
+    return { queued: true, jobId: job.id }
   }
   const csv = typeof input.csv === 'string' ? input.csv : ''
   if (!csv.trim()) throw createError({ statusCode: 400, message: 'csv 不能为空' })
@@ -288,11 +304,19 @@ export async function importStudentsCsv(
  */
 export async function importScoresCsv(
   actor: SmsActor,
-  input: { csv?: unknown, examId?: unknown, dryRun?: unknown, batchId?: unknown, reason?: unknown }
-): Promise<ScoreImportResult> {
+  input: { csv?: unknown, examId?: unknown, dryRun?: unknown, batchId?: unknown, reason?: unknown, defer?: unknown }
+): Promise<ScoreImportResult | { queued: true, jobId: number }> {
   const organizationId = requireSmsOrganization(actor)
   if (!canUseSms(actor, 'update', 'scores')) {
     throw createError({ statusCode: 403, statusMessage: 'Forbidden', message: 'No permission to import scores' })
+  }
+  if (input.defer === true && input.dryRun !== true) {
+    const job = await enqueueBackgroundJob(
+      'score-import',
+      { actor: snapshotActor(actor), input: { ...input, defer: false } },
+      organizationId
+    )
+    return { queued: true, jobId: job.id }
   }
   const examId = Number(input.examId)
   if (!Number.isSafeInteger(examId) || examId <= 0) {

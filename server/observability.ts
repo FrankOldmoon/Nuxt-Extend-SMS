@@ -5,7 +5,7 @@
  * one-shot KPI snapshot (notifications, approval SLA, imports, agent failures).
  * Both are read-only and never expose another organization's rows.
  */
-import { and, desc, eq, gte, lte, sql } from 'drizzle-orm'
+import { and, desc, eq, gte, lt, lte, sql } from 'drizzle-orm'
 import { createError } from 'h3'
 import { db } from '../../../server/sdk'
 import { auditLogs } from '../../../server/database/schema'
@@ -36,6 +36,8 @@ export interface AuditQuery {
   from?: unknown
   to?: unknown
   limit?: unknown
+  /** 游标分页：上一页最后一条的 id。 */
+  cursor?: unknown
 }
 
 function parseDate(value: unknown, field: string): Date | null {
@@ -62,6 +64,10 @@ export async function queryAuditLogs(actor: SmsActor, options: AuditQuery = {}) 
   if (from) conditions.push(gte(auditLogs.createdAt, from))
   const to = parseDate(options.to, 'to')
   if (to) conditions.push(lte(auditLogs.createdAt, to))
+  const cursor = Number(options.cursor)
+  if (Number.isSafeInteger(cursor) && cursor > 0) {
+    conditions.push(lt(auditLogs.id, cursor))
+  }
 
   const limit = Math.min(Math.max(Math.floor(Number(options.limit ?? 100) || 100), 1), 500)
   return await db.select({
@@ -88,6 +94,35 @@ export interface SmsMetrics {
   imports: { batches: number }
   agents: { failed: number, running: number }
   knowledge: { published: number }
+}
+
+/**
+ * 输出 Prometheus 文本格式（exposition format 0.0.4）。
+ * 仅暴露聚合计数，不含学生/通知正文等个人信息。
+ */
+export function formatPrometheusMetrics(metrics: SmsMetrics, organizationId?: number | null): string {
+  const label = organizationId ? `{organization_id="${organizationId}"}` : ''
+  const lines: Array<[string, string, number]> = [
+    ['sms_notifications_total', 'Total in-app notifications', metrics.notifications.total],
+    ['sms_notifications_unread', 'Unread in-app notifications', metrics.notifications.unread],
+    ['sms_approvals_pending', 'Pending approval tasks', metrics.approvals.pending],
+    ['sms_approvals_overdue', 'Overdue approval tasks', metrics.approvals.overdue],
+    ['sms_import_batches_total', 'Student import batches', metrics.imports.batches],
+    ['sms_agent_tasks_failed', 'Failed agent tasks', metrics.agents.failed],
+    ['sms_agent_tasks_running', 'Running agent tasks', metrics.agents.running],
+    ['sms_knowledge_articles_published', 'Published knowledge articles', metrics.knowledge.published]
+  ]
+  const output: string[] = []
+  for (const [name, help, value] of lines) {
+    output.push(`# HELP ${name} ${help}`)
+    output.push(`# TYPE ${name} gauge`)
+    output.push(`${name}${label} ${value}`)
+  }
+  output.push('# HELP sms_metrics_generated_at_seconds Unix timestamp of this snapshot')
+  output.push('# TYPE sms_metrics_generated_at_seconds gauge')
+  const generatedAt = Date.parse(metrics.generatedAt)
+  output.push(`sms_metrics_generated_at_seconds ${Number.isFinite(generatedAt) ? Math.floor(generatedAt / 1000) : 0}`)
+  return `${output.join('\n')}\n`
 }
 
 /** 工作台/监控页一次取齐关键指标，避免多次往返。 */

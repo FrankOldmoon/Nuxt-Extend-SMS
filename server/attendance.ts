@@ -20,6 +20,7 @@ import {
 } from './database/schema'
 import { canUseSms, isSmsAdmin, requireSmsOrganization, type SmsActor } from './context'
 import { notifyAttendanceAlerts } from './notifications'
+import { smsDateDaysAgo, smsDateString } from './time'
 
 export const ATTENDANCE_STATUSES = ['present', 'late', 'absent', 'excused', 'leave'] as const
 export type AttendanceStatus = typeof ATTENDANCE_STATUSES[number]
@@ -44,7 +45,7 @@ const MAX_BATCH_ENTRIES = 100
 
 export function normalizeAttendanceDate(value: unknown): string {
   if (value === undefined || value === null || value === '') {
-    return new Date().toISOString().slice(0, 10)
+    return smsDateString()
   }
   if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value)) {
     throw createError({ statusCode: 400, message: 'date must be YYYY-MM-DD' })
@@ -308,7 +309,7 @@ async function refreshAlerts(
   tenantId: number | null,
   studentId: number
 ): Promise<number> {
-  const since = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10)
+  const since = smsDateDaysAgo(90)
   const rows = await tx.select({
     date: smsAttendanceRecords.attendanceDate,
     status: smsAttendanceRecords.status
@@ -747,7 +748,7 @@ export async function summarizeAttendance(actor: SmsActor, options: AttendanceSu
   const organizationId = requireSmsOrganization(actor)
   const allowed = await scopedClassIds(actor)
   const to = normalizeAttendanceDate(options.to)
-  const from = normalizeAttendanceDate(options.from ?? new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10))
+  const from = normalizeAttendanceDate(options.from ?? smsDateDaysAgo(30))
   if (from > to) throw createError({ statusCode: 400, message: 'from must be before to' })
 
   const conditions = [

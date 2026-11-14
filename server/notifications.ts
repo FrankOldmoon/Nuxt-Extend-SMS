@@ -8,12 +8,14 @@
  * Recipients are always resolved server-side: callers pass a student/class id,
  * never a list of user ids they merely "claim" to own.
  */
-import { and, desc, eq, inArray, isNull } from 'drizzle-orm'
+import { and, desc, eq, inArray, isNull, lt, lte } from 'drizzle-orm'
 import { createError } from 'h3'
+import { createHmac } from 'node:crypto'
 import { db, pool, writeAudit } from '../../../server/sdk'
 import {
   smsClasses,
   smsGuardians,
+  smsNotificationOutbox,
   smsNotificationPreferences,
   smsNotifications,
   smsStudentGuardians
@@ -120,18 +122,22 @@ export async function createNotifications(
     status: 'unread' as const
   })))
 
-  // 站内信先落库，外部渠道异步投递且失败不影响业务事务。
-  void dispatchExternalNotification({
+  // 站内信先落库；外部渠道写入 outbox，由定时任务异步投递与重试。
+  await enqueueExternalNotification({
+    organizationId: input.organizationId,
+    tenantId: input.tenantId,
     recipients,
     category: input.category,
     title,
     body,
     link
-  })
+  }, tx)
   return recipients.length
 }
 
 export interface ExternalNotificationPayload {
+  organizationId?: number | null
+  tenantId?: number | null
   recipients: readonly number[]
   category: NotificationCategory
   title: string
@@ -139,27 +145,117 @@ export interface ExternalNotificationPayload {
   link: string | null
 }
 
+/** 外部投递是否启用；未配置时无需写 outbox，避免空表增长。 */
+export function externalDeliveryEnabled(): boolean {
+  return Boolean(process.env.SMS_NOTIFICATION_WEBHOOK_URL)
+    || process.env.SMS_NOTIFICATION_EMAIL_MODE === 'log'
+}
+
 /**
- * 邮件/Webhook 适配器：未配置环境变量时完全 no-op；配置后失败只记录日志。
- * 这样部署方无需改代码即可接入企业微信/邮件网关。
+ * 写入发件箱。传入事务时与站内信同生共死；失败只记录日志，
+ * 不阻断业务操作。
  */
-export async function dispatchExternalNotification(payload: ExternalNotificationPayload): Promise<void> {
-  const webhook = process.env.SMS_NOTIFICATION_WEBHOOK_URL
-  const emailMode = process.env.SMS_NOTIFICATION_EMAIL_MODE
+export async function enqueueExternalNotification(
+  payload: ExternalNotificationPayload,
+  executor?: Tx
+): Promise<void> {
+  if (!externalDeliveryEnabled()) return
+  const channel = process.env.SMS_NOTIFICATION_WEBHOOK_URL ? 'webhook' : 'email'
   try {
-    if (webhook) {
-      await fetch(webhook, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify(payload)
-      })
-    }
-    if (emailMode === 'log') {
-      console.info('[sms:notification:email]', payload)
-    }
+    const writer = (executor ?? db) as Tx
+    await writer.insert(smsNotificationOutbox).values({
+      organizationId: payload.organizationId ?? null,
+      tenantId: payload.tenantId ?? null,
+      channel,
+      payload: payload as unknown as Record<string, unknown>,
+      status: 'pending'
+    })
   } catch (error) {
-    console.warn('[sms:notification] external delivery failed', error instanceof Error ? error.message : error)
+    console.warn('[sms:notification] outbox enqueue failed', error instanceof Error ? error.message : error)
   }
+}
+
+/** 兼容旧调用：只负责入队，不再同步发起网络请求。 */
+export async function dispatchExternalNotification(payload: ExternalNotificationPayload): Promise<void> {
+  await enqueueExternalNotification(payload)
+}
+
+/** Webhook 签名：`sha256=<hex>`，接收方用同一 secret 校验原始 body。 */
+export function signNotificationPayload(body: string, secret: string): string {
+  return `sha256=${createHmac('sha256', secret).update(body).digest('hex')}`
+}
+
+async function deliverExternalNotification(
+  channel: string,
+  payload: ExternalNotificationPayload
+): Promise<void> {
+  if (channel === 'email') {
+    if (process.env.SMS_NOTIFICATION_EMAIL_MODE !== 'log') {
+      throw new Error('email delivery is not configured')
+    }
+    console.info('[sms:notification:email]', payload)
+    return
+  }
+
+  const webhook = process.env.SMS_NOTIFICATION_WEBHOOK_URL
+  if (!webhook) throw new Error('SMS_NOTIFICATION_WEBHOOK_URL is not configured')
+  const body = JSON.stringify(payload)
+  const secret = process.env.SMS_NOTIFICATION_WEBHOOK_SECRET
+  const headers: Record<string, string> = { 'content-type': 'application/json' }
+  if (secret) headers['x-sms-signature'] = signNotificationPayload(body, secret)
+
+  const response = await fetch(webhook, { method: 'POST', headers, body })
+  if (!response.ok) throw new Error(`webhook responded ${response.status}`)
+}
+
+/** 指数退避：1、2、4、8… 分钟，最多 60 分钟。 */
+export function outboxBackoffMs(attempts: number): number {
+  return Math.min(60 * 60_000, 60_000 * 2 ** Math.max(0, attempts - 1))
+}
+
+/**
+ * 投递一批到期的 outbox 行。返回统计，供定时任务打印。
+ * 单行失败不会中断整批。
+ */
+export async function deliverNotificationOutboxBatch(
+  limit = 50,
+  now: Date = new Date()
+): Promise<{ attempted: number, delivered: number, failed: number, retried: number }> {
+  const rows = await db.select().from(smsNotificationOutbox)
+    .where(and(
+      eq(smsNotificationOutbox.status, 'pending'),
+      lte(smsNotificationOutbox.nextAttemptAt, now)
+    ))
+    .orderBy(smsNotificationOutbox.nextAttemptAt)
+    .limit(limit)
+
+  let delivered = 0
+  let failed = 0
+  let retried = 0
+  for (const row of rows) {
+    const attempts = row.attempts + 1
+    try {
+      await deliverExternalNotification(row.channel, row.payload as unknown as ExternalNotificationPayload)
+      await db.update(smsNotificationOutbox)
+        .set({ status: 'delivered', attempts, deliveredAt: now, lastError: null })
+        .where(eq(smsNotificationOutbox.id, row.id))
+      delivered += 1
+    } catch (error) {
+      const message = (error instanceof Error ? error.message : String(error)).slice(0, 500)
+      const exhausted = attempts >= row.maxAttempts
+      await db.update(smsNotificationOutbox)
+        .set({
+          status: exhausted ? 'failed' : 'pending',
+          attempts,
+          lastError: message,
+          nextAttemptAt: new Date(now.getTime() + outboxBackoffMs(attempts))
+        })
+        .where(eq(smsNotificationOutbox.id, row.id))
+      if (exhausted) failed += 1
+      else retried += 1
+    }
+  }
+  return { attempted: rows.length, delivered, failed, retried }
 }
 
 // ---------------------------------------------------------------------------
@@ -282,6 +378,8 @@ export interface NotificationListQuery {
   status?: unknown
   category?: unknown
   limit?: unknown
+  /** 游标分页：上一页最后一条的 id。 */
+  cursor?: unknown
 }
 
 export async function listNotifications(actor: SmsActor, options: NotificationListQuery = {}) {
@@ -290,6 +388,10 @@ export async function listNotifications(actor: SmsActor, options: NotificationLi
     eq(smsNotifications.organizationId, organizationId),
     eq(smsNotifications.recipientUserId, actor.userId)
   ]
+  const cursor = Number(options.cursor)
+  if (Number.isSafeInteger(cursor) && cursor > 0) {
+    conditions.push(lt(smsNotifications.id, cursor))
+  }
   if (options.status !== undefined && options.status !== null && options.status !== ''
     && options.status !== 'all') {
     conditions.push(eq(smsNotifications.status, normalizeNotificationStatus(options.status)))

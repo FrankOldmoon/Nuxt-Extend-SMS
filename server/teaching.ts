@@ -8,6 +8,7 @@
 import { and, desc, eq, inArray, isNull, sql } from 'drizzle-orm'
 import { createError } from 'h3'
 import { db, writeAudit } from '../../../server/sdk'
+import { files } from '../../../server/database/schema'
 import {
   smsAssignments,
   smsAssignmentSubmissions,
@@ -251,6 +252,28 @@ export interface SubmitAssignmentInput {
   content?: unknown
   /** 附件地址：站内路径或 http(s) URL；不接收任意协议。 */
   attachmentUrl?: unknown
+  /** 平台文件 ID（优先于 attachmentUrl）；必须是本组织未删除文件。 */
+  attachmentFileId?: unknown
+}
+
+/**
+ * 校验附件文件归属：只允许引用当前组织、未删除的文件，
+ * 防止通过猜测 file id 读取其他租户的资源。
+ */
+async function resolveAttachmentFileId(value: unknown, organizationId: number): Promise<number | null> {
+  if (value === undefined || value === null || value === '') return null
+  const fileId = positiveId(value, 'attachmentFileId')
+  const [file] = await db.select({ id: files.id }).from(files)
+    .where(and(
+      eq(files.id, fileId),
+      eq(files.organizationId, organizationId),
+      isNull(files.deletedAt)
+    ))
+    .limit(1)
+  if (!file) {
+    throw createError({ statusCode: 400, message: 'attachmentFileId 不属于当前组织或已删除' })
+  }
+  return file.id
 }
 
 function normalizeAttachmentUrl(value: unknown): string | null {
@@ -293,6 +316,7 @@ export async function submitAssignment(actor: SmsActor, input: SubmitAssignmentI
   }
   const content = typeof input.content === 'string' ? input.content.trim().slice(0, 50_000) : null
   const attachmentUrl = normalizeAttachmentUrl(input.attachmentUrl)
+  const attachmentFileId = await resolveAttachmentFileId(input.attachmentFileId, organizationId)
 
   return await db.transaction(async (tx) => {
     const [row] = await tx.insert(smsAssignmentSubmissions).values({
@@ -302,6 +326,7 @@ export async function submitAssignment(actor: SmsActor, input: SubmitAssignmentI
       studentId: student.id,
       content,
       attachmentUrl,
+      attachmentFileId,
       status: 'submitted',
       submittedAt: new Date()
     }).onConflictDoUpdate({
@@ -310,7 +335,7 @@ export async function submitAssignment(actor: SmsActor, input: SubmitAssignmentI
         smsAssignmentSubmissions.assignmentId,
         smsAssignmentSubmissions.studentId
       ],
-      set: { content, attachmentUrl, status: 'submitted', submittedAt: new Date() }
+      set: { content, attachmentUrl, attachmentFileId, status: 'submitted', submittedAt: new Date() }
     }).returning()
     await writeAudit(tx, {
       actorUserId: actor.userId,

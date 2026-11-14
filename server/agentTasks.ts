@@ -5,7 +5,7 @@
  * validated against a small table and persisted, so a retry after a restart
  * resumes from the last durable step instead of replaying side effects.
  */
-import { and, desc, eq } from 'drizzle-orm'
+import { and, desc, eq, lt } from 'drizzle-orm'
 import { createError } from 'h3'
 import { db, writeAudit } from '../../../server/sdk'
 import { smsAgentTaskEvents, smsAgentTasks } from './database/schema'
@@ -258,6 +258,8 @@ export async function advanceAgentTask(actor: SmsActor, input: AdvanceAgentTaskI
 export interface AgentTaskEventQuery {
   taskId?: unknown
   limit?: unknown
+  /** 游标分页：上一页最后一条的 id。 */
+  cursor?: unknown
 }
 
 /** 事件流按时间倒序返回，用于回放一次任务执行。 */
@@ -271,6 +273,10 @@ export async function listAgentTaskEvents(actor: SmsActor, options: AgentTaskEve
     eq(smsAgentTaskEvents.organizationId, organizationId),
     eq(smsAgentTaskEvents.taskId, taskId)
   ]
+  const cursor = Number(options.cursor)
+  if (Number.isSafeInteger(cursor) && cursor > 0) {
+    conditions.push(lt(smsAgentTaskEvents.id, cursor))
+  }
   const limit = Math.min(Math.max(Math.floor(Number(options.limit ?? 100) || 100), 1), 200)
   return await db.select({
     id: smsAgentTaskEvents.id,

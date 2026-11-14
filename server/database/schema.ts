@@ -829,6 +829,8 @@ export const smsKnowledgeArticles = pgTable(
     audience: varchar('audience', { length: 20 }).notNull().default('all'),
     /** published | draft */
     status: varchar('status', { length: 20 }).notNull().default('published'),
+    /** 可选语义向量；未配置 embedding 服务时为空，检索回退关键词。 */
+    embedding: jsonb('embedding').$type<number[]>(),
     createdBy: integer('created_by').notNull(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
     createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull()
@@ -936,6 +938,8 @@ export const smsAssignmentSubmissions = pgTable(
     content: text('content'),
     /** 站内路径或 http(s) 附件地址。 */
     attachmentUrl: varchar('attachment_url', { length: 500 }),
+    /** 平台文件 ID；引用前已校验同组织归属。 */
+    attachmentFileId: integer('attachment_file_id'),
     /** submitted | graded */
     status: varchar('status', { length: 20 }).notNull().default('submitted'),
     score: numeric('score', { precision: 6, scale: 2 }),
@@ -1022,5 +1026,64 @@ export const smsEvaluationMetrics = pgTable(
   table => ({
     metricIdx: index('sms_evaluation_metrics_metric_idx')
       .on(table.organizationId, table.metric, table.recordedAt)
+  })
+)
+
+/**
+ * 外部通知发件箱（P1）。
+ *
+ * 站内信落库后只写一行 outbox，由定时任务负责 Webhook 投递与重试；
+ * 业务事务不会因为第三方网关抖动而失败或阻塞。
+ */
+export const smsNotificationOutbox = pgTable(
+  'sms_notification_outbox',
+  {
+    id: serial('id').primaryKey(),
+    organizationId: integer('organization_id'),
+    tenantId: integer('tenant_id'),
+    /** webhook | email */
+    channel: varchar('channel', { length: 20 }).notNull().default('webhook'),
+    payload: jsonb('payload').$type<Record<string, unknown>>().notNull(),
+    /** pending | delivered | failed */
+    status: varchar('status', { length: 20 }).notNull().default('pending'),
+    attempts: integer('attempts').notNull().default(0),
+    maxAttempts: integer('max_attempts').notNull().default(5),
+    nextAttemptAt: timestamp('next_attempt_at', { withTimezone: true }).defaultNow().notNull(),
+    lastError: varchar('last_error', { length: 500 }),
+    deliveredAt: timestamp('delivered_at', { withTimezone: true }),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull()
+  },
+  table => ({
+    dueIdx: index('sms_notification_outbox_due_idx')
+      .on(table.status, table.nextAttemptAt)
+  })
+)
+
+/**
+ * 通用后台任务队列（P2）。
+ *
+ * 导入、日报等重任务可以入队由 worker 执行，HTTP 请求只负责返回 jobId，
+ * 避免长事务占用请求线程。
+ */
+export const smsBackgroundJobs = pgTable(
+  'sms_background_jobs',
+  {
+    id: serial('id').primaryKey(),
+    organizationId: integer('organization_id'),
+    kind: varchar('kind', { length: 40 }).notNull(),
+    payload: jsonb('payload').$type<Record<string, unknown>>().notNull(),
+    /** pending | running | succeeded | failed */
+    status: varchar('status', { length: 20 }).notNull().default('pending'),
+    attempts: integer('attempts').notNull().default(0),
+    maxAttempts: integer('max_attempts').notNull().default(3),
+    nextAttemptAt: timestamp('next_attempt_at', { withTimezone: true }).defaultNow().notNull(),
+    lastError: varchar('last_error', { length: 500 }),
+    result: jsonb('result').$type<Record<string, unknown>>(),
+    finishedAt: timestamp('finished_at', { withTimezone: true }),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull()
+  },
+  table => ({
+    dueIdx: index('sms_background_jobs_due_idx').on(table.status, table.nextAttemptAt),
+    kindIdx: index('sms_background_jobs_kind_idx').on(table.kind, table.status)
   })
 )

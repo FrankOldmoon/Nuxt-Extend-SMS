@@ -85,7 +85,13 @@ export const smsModule: ModuleDefinition = {
     'sms.elections.read',
     'sms.elections.create'
   ],
-  navigation: [{ id: 'sms', label: 'SMS', to: '/sms' }],
+  navigation: [
+    { id: 'sms', label: 'SMS', to: '/sms' },
+    { id: 'sms-approvals', label: '审批收件箱', to: '/sms/approvals' },
+    { id: 'sms-knowledge', label: '知识库管理', to: '/sms/knowledge' },
+    { id: 'sms-notifications', label: '通知偏好', to: '/sms/notifications' },
+    { id: 'sms-scores-import', label: '成绩导入', to: '/sms/scores/import' }
+  ],
   database: [
     'sms_academic_years',
     'sms_terms',
@@ -128,7 +134,9 @@ export const smsModule: ModuleDefinition = {
     'sms_course_elections',
     'sms_notification_preferences',
     'sms_agent_task_events',
-    'sms_evaluation_metrics'
+    'sms_evaluation_metrics',
+    'sms_notification_outbox',
+    'sms_background_jobs'
   ],
   api: [
     'GET /api/modules/sms/students',
@@ -202,7 +210,8 @@ export const smsModule: ModuleDefinition = {
     'GET /api/modules/sms/evaluation/metrics',
     'POST /api/modules/sms/evaluation/metrics',
     'GET /api/modules/sms/audit',
-    'GET /api/modules/sms/metrics'
+    'GET /api/modules/sms/metrics',
+    'GET /api/modules/sms/metrics/prometheus'
   ],
   tools: [
     'sms.students.search',

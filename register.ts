@@ -16,6 +16,7 @@ import {
   registerDataScopeResolver,
   registerTableValidator
 } from '../../server/sdk'
+import { setResponseHeader } from 'h3'
 import { and, eq, inArray } from 'drizzle-orm'
 import { canUseSms, type SmsActor } from './server/context'
 import { smsCapabilities } from './server/capabilities'
@@ -99,7 +100,7 @@ import { importScoresCsv, importStudentsCsv } from './server/imports'
 import { listDailyReport } from './server/reportDaily'
 import { advanceAgentTask, createAgentTask, listAgentTaskEvents, listAgentTasks } from './server/agentTasks'
 import { listEvaluationMetrics, recordEvaluationMetric } from './server/evaluation'
-import { buildSmsMetrics, queryAuditLogs } from './server/observability'
+import { buildSmsMetrics, formatPrometheusMetrics, queryAuditLogs } from './server/observability'
 import { listApprovalInbox, reassignApprovalTask } from './server/approvals'
 import {
   createAssignment,
@@ -668,10 +669,17 @@ const smsApis: ModuleApiDefinition<SmsActor>[] = [
     schema: isRecord,
     authorize: actor => canUseSms(actor, 'read'),
     handler: (_event, actor, input) => {
-      const query = isRecord(input)
-        ? (typeof input.q === 'string' ? input.q : typeof input.query === 'string' ? input.query : undefined)
-        : undefined
-      return searchStudents(actor, { query })
+      const args = isRecord(input) ? input : {}
+      const query = typeof args.q === 'string'
+        ? args.q
+        : typeof args.query === 'string' ? args.query : undefined
+      const limit = Number(args.limit)
+      const cursor = Number(args.cursor)
+      return searchStudents(actor, {
+        query,
+        limit: Number.isSafeInteger(limit) ? limit : undefined,
+        cursor: Number.isSafeInteger(cursor) ? cursor : undefined
+      })
     }
   },
   {
@@ -1224,6 +1232,20 @@ const smsApis: ModuleApiDefinition<SmsActor>[] = [
     rateLimit: { max: 60, windowMs: 60_000 },
     authorize: actor => canUseSms(actor, 'read', 'reports'),
     handler: (_event, actor) => buildSmsMetrics(actor)
+  },
+  {
+    id: 'sms.metrics.prometheus',
+    moduleId: 'sms',
+    method: 'GET',
+    path: 'sms/metrics/prometheus',
+    schema: isRecord,
+    rateLimit: { max: 60, windowMs: 60_000 },
+    authorize: actor => canUseSms(actor, 'read', 'reports'),
+    handler: async (event, actor) => {
+      const metrics = await buildSmsMetrics(actor)
+      setResponseHeader(event as Parameters<typeof setResponseHeader>[0], 'content-type', 'text/plain; version=0.0.4; charset=utf-8')
+      return formatPrometheusMetrics(metrics, actor.organizationId)
+    }
   },
   {
     id: 'sms.evaluation.metrics.list',

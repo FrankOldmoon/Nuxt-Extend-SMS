@@ -1,4 +1,4 @@
-import { and, asc, eq, ilike, inArray, isNull, or } from 'drizzle-orm'
+import { and, asc, eq, ilike, inArray, isNull, lt, or } from 'drizzle-orm'
 import { createError } from 'h3'
 import { db, writeAudit } from '../../../server/sdk'
 import { smsClasses, smsStudents, smsTeacherAssignments } from './database/schema'
@@ -8,6 +8,8 @@ import { guardianStudentIds } from './guardians'
 export interface StudentSearchOptions {
   query?: string
   limit?: number
+  /** 游标分页：上一页最后一行的 id，返回更早的记录。 */
+  cursor?: number
 }
 
 /** Classes assigned to the teacher in the current organization. */
@@ -109,8 +111,13 @@ export async function assertClassInContext(actor: SmsActor, classId: number) {
  * page. Row scope comes from TeacherAssignment, never from request input.
  */
 export async function searchStudents(actor: SmsActor, options: StudentSearchOptions = {}) {
-  const limit = Math.min(Math.max(options.limit ?? 50, 1), 200)
+  const limit = Math.min(Math.max(Math.floor(Number(options.limit ?? 50) || 50), 1), 200)
   const conditions = await studentScopeConditions(actor)
+
+  const cursor = Number(options.cursor)
+  if (Number.isSafeInteger(cursor) && cursor > 0) {
+    conditions.push(lt(smsStudents.id, cursor))
+  }
 
   const query = options.query?.trim()
   if (query) {

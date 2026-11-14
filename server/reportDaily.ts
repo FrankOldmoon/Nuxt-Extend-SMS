@@ -13,6 +13,7 @@ import {
   smsStudents
 } from './database/schema'
 import { canUseSms, requireSmsOrganization, type SmsActor } from './context'
+import { smsDateDaysAgo } from './time'
 
 export const DAILY_REPORT_SESSIONS = ['full_day'] as const
 
@@ -20,7 +21,7 @@ export function normalizeReportDate(value: unknown): string {
   const text = typeof value === 'string' ? value.trim() : ''
   if (/^\d{4}-\d{2}-\d{2}$/.test(text)) return text
   if (value === undefined || value === null || value === '') {
-    return new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString().slice(0, 10)
+    return smsDateDaysAgo(1)
   }
   throw createError({ statusCode: 400, message: 'date 必须是 YYYY-MM-DD' })
 }

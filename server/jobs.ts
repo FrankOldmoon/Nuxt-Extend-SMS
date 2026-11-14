@@ -22,6 +22,7 @@ import {
   smsReportRuns,
   smsStudents
 } from './database/schema'
+import { smsDateDaysAgo, smsDateParts, smsDateString } from './time'
 
 const DAY_MS = 24 * 60 * 60 * 1000
 const ALERT_LOOKBACK_DAYS = 90
@@ -36,12 +37,13 @@ function isoDate(date: Date): string {
   return date.toISOString().slice(0, 10)
 }
 
-/** Monday–Sunday (UTC) range containing `date`. */
+/** Monday–Sunday range containing `date`, evaluated in the school timezone. */
 export function weekRange(date: Date): DateRange {
-  const day = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()))
-  const weekday = day.getUTCDay() // 0 = Sunday
+  const { year, month, day } = smsDateParts(date)
+  const base = new Date(Date.UTC(year, month - 1, day))
+  const weekday = base.getUTCDay() // 0 = Sunday
   const offset = weekday === 0 ? -6 : 1 - weekday
-  const start = new Date(day.getTime() + offset * DAY_MS)
+  const start = new Date(base.getTime() + offset * DAY_MS)
   const end = new Date(start.getTime() + 6 * DAY_MS)
   return { start: isoDate(start), end: isoDate(end) }
 }
@@ -149,7 +151,7 @@ export async function runAttendanceAlertScan(now: Date = new Date()): Promise<{
   alertsCreated: number
   notified: number
 }> {
-  const since = isoDate(new Date(now.getTime() - ALERT_LOOKBACK_DAYS * DAY_MS))
+  const since = smsDateDaysAgo(ALERT_LOOKBACK_DAYS, now)
   const rows = await db.select({
     organizationId: smsAttendanceRecords.organizationId,
     tenantId: smsAttendanceRecords.tenantId,
@@ -233,7 +235,7 @@ export async function runAttendanceAlertScan(now: Date = new Date()): Promise<{
   }
 
   const notified = await notifyNewAlerts(newAlerts)
-  await recordScanRuns(orgTenants, since, isoDate(now), now, alertsCreated)
+  await recordScanRuns(orgTenants, since, smsDateString(now), now, alertsCreated)
 
   return { organizations: organizations.size, studentsScanned: buckets.size, alertsCreated, notified }
 }

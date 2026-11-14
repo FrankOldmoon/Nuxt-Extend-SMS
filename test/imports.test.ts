@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { parseCsv } from '../server/imports'
+import { buildErrorsCsv, parseCsv } from '../server/imports'
 
 describe('CSV parser', () => {
   it('parses headers and rows with CRLF', () => {
@@ -23,5 +23,22 @@ describe('CSV parser', () => {
     expect(parseCsv('\n\nname,studentNo,classId\n\n')).toEqual([
       ['name', 'studentNo', 'classId']
     ])
+  })
+})
+
+describe('buildErrorsCsv', () => {
+  it('neutralises spreadsheet formula prefixes', () => {
+    const csv = buildErrorsCsv([
+      { line: 2, status: 'invalid', message: '=HYPERLINK("http://evil")' },
+      { line: 3, status: 'invalid', studentNo: '+1', name: '@cmd' }
+    ])
+    const lines = csv.split('\n')
+    expect(lines[0]).toBe('line,studentNo,name,message')
+    expect(lines[1]).toBe('2,,,"\'=HYPERLINK(""http://evil"")"')
+    expect(lines[2]).toBe(`3,'+1,'@cmd,`)
+  })
+
+  it('skips valid rows', () => {
+    expect(buildErrorsCsv([{ line: 2, status: 'valid' }])).toBe('line,studentNo,name,message')
   })
 })

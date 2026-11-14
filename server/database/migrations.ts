@@ -943,5 +943,57 @@ export const smsMigrations: ModuleMigration[] = [
         END $$;
       `)
     }
+  },
+  {
+    id: 'sms:020-reliability',
+    checksum: '1',
+    async up(executor) {
+      const client = executor as SqlExecutor
+      await client.query(`
+        CREATE TABLE IF NOT EXISTS sms_notification_outbox (
+          id               serial PRIMARY KEY,
+          organization_id  integer,
+          tenant_id        integer,
+          channel          varchar(20) NOT NULL DEFAULT 'webhook',
+          payload          jsonb NOT NULL,
+          status           varchar(20) NOT NULL DEFAULT 'pending',
+          attempts         integer NOT NULL DEFAULT 0,
+          max_attempts     integer NOT NULL DEFAULT 5,
+          next_attempt_at  timestamptz NOT NULL DEFAULT now(),
+          last_error       varchar(500),
+          delivered_at     timestamptz,
+          created_at       timestamptz NOT NULL DEFAULT now()
+        );
+        CREATE INDEX IF NOT EXISTS sms_notification_outbox_due_idx
+          ON sms_notification_outbox (status, next_attempt_at);
+
+        ALTER TABLE sms_assignment_submissions ADD COLUMN IF NOT EXISTS attachment_file_id integer;
+        ALTER TABLE sms_knowledge_articles ADD COLUMN IF NOT EXISTS embedding jsonb;
+
+        CREATE TABLE IF NOT EXISTS sms_background_jobs (
+          id               serial PRIMARY KEY,
+          organization_id  integer,
+          kind             varchar(40) NOT NULL,
+          payload          jsonb NOT NULL,
+          status           varchar(20) NOT NULL DEFAULT 'pending',
+          attempts         integer NOT NULL DEFAULT 0,
+          max_attempts     integer NOT NULL DEFAULT 3,
+          next_attempt_at  timestamptz NOT NULL DEFAULT now(),
+          last_error       varchar(500),
+          result           jsonb,
+          finished_at      timestamptz,
+          created_at       timestamptz NOT NULL DEFAULT now()
+        );
+        CREATE INDEX IF NOT EXISTS sms_background_jobs_due_idx
+          ON sms_background_jobs (status, next_attempt_at);
+        CREATE INDEX IF NOT EXISTS sms_background_jobs_kind_idx
+          ON sms_background_jobs (kind, status);
+        CREATE INDEX IF NOT EXISTS sms_background_jobs_org_idx
+          ON sms_background_jobs (organization_id, status);
+
+        CREATE INDEX IF NOT EXISTS sms_assignment_submissions_student_idx
+          ON sms_assignment_submissions (organization_id, student_id);
+      `)
+    }
   }
 ]
