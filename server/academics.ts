@@ -356,7 +356,8 @@ export async function listSubjects(actor: SmsActor, query?: string, limit?: numb
   return await db.select({
     id: smsSubjects.id,
     code: smsSubjects.code,
-    name: smsSubjects.name
+    name: smsSubjects.name,
+    capacity: smsSubjects.capacity
   }).from(smsSubjects)
     .where(and(...conditions))
     .orderBy(asc(smsSubjects.name))

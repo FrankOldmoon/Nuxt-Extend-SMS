@@ -112,9 +112,10 @@ import {
   listAssignments,
   listElections,
   setCourseElection,
+  setStudentElections,
   submitAssignment
 } from './server/teaching'
-import { classInContext, assertAcademicYearInContext, assertGradeInContext, assertSubjectInContext, assertTermInContext, listClasses, listSubjects } from './server/academics'
+import { classInContext, assertAcademicYearInContext, assertGradeInContext, assertSubjectInContext, assertTermInContext, listClasses, listSubjects, listTerms } from './server/academics'
 import { assertStudentInContext } from './server/enrollment'
 import { assertGuardianInContext, guardianStudentIds } from './server/guardians'
 import {
@@ -1452,6 +1453,34 @@ const smsApis: ModuleApiDefinition<SmsActor>[] = [
     schema: isRecord,
     authorize: actor => canUseSms(actor, 'create', 'elections'),
     handler: (_event, actor, input) => setCourseElection(actor, input as Record<string, unknown>)
+  },
+  {
+    id: 'sms.elections.batch',
+    moduleId: 'sms',
+    method: 'POST',
+    path: 'sms/elections/batch',
+    schema: isRecord,
+    rateLimit: { max: 60, windowMs: 60_000 },
+    authorize: actor => canUseSms(actor, 'create', 'elections'),
+    handler: (_event, actor, input) => setStudentElections(actor, isRecord(input) ? input : {})
+  },
+  {
+    id: 'sms.terms.list',
+    moduleId: 'sms',
+    method: 'GET',
+    path: 'sms/terms',
+    schema: isRecord,
+    authorize: actor => canUseSms(actor, 'read'),
+    handler: (_event, actor, input) => {
+      const args = isRecord(input) ? input : {}
+      const yearId = Number(args.academicYearId)
+      const limit = Number(args.limit)
+      return listTerms(
+        actor,
+        Number.isSafeInteger(yearId) && yearId > 0 ? yearId : undefined,
+        Number.isSafeInteger(limit) ? limit : undefined
+      )
+    }
   }
 ]
 

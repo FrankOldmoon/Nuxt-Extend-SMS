@@ -5,7 +5,7 @@
  * staff are limited to their assigned / homeroom classes unless they hold a
  * school-wide scope flag.
  */
-import { and, desc, eq, inArray, isNull, sql } from 'drizzle-orm'
+import { and, desc, eq, inArray, isNull, notInArray, sql } from 'drizzle-orm'
 import { createError } from 'h3'
 import { db, writeAudit } from '../../../server/sdk'
 import { files } from '../../../server/database/schema'
@@ -15,10 +15,11 @@ import {
   smsClasses,
   smsCourseElections,
   smsStudents,
-  smsSubjects
+  smsSubjects,
+  smsTerms
 } from './database/schema'
 import { assertSubjectInContext, assertTermInContext } from './academics'
-import { assertClassInContext, assignedClassIds } from './students'
+import { assertClassInContext, assignedClassIds, getStudent } from './students'
 import { guardianStudentIds } from './guardians'
 import { canUseSms, isSmsAdmin, requireSmsOrganization, type SmsActor } from './context'
 
@@ -457,11 +458,19 @@ export async function listElections(actor: SmsActor, options: ElectionQuery = {}
   return await db.select({
     id: smsCourseElections.id,
     studentId: smsCourseElections.studentId,
+    studentName: smsStudents.name,
+    studentNo: smsStudents.studentNo,
     subjectId: smsCourseElections.subjectId,
+    subjectName: smsSubjects.name,
+    subjectCapacity: smsSubjects.capacity,
     termId: smsCourseElections.termId,
+    termName: smsTerms.name,
     status: smsCourseElections.status,
     electedAt: smsCourseElections.electedAt
   }).from(smsCourseElections)
+    .innerJoin(smsStudents, eq(smsStudents.id, smsCourseElections.studentId))
+    .innerJoin(smsSubjects, eq(smsSubjects.id, smsCourseElections.subjectId))
+    .innerJoin(smsTerms, eq(smsTerms.id, smsCourseElections.termId))
     .where(and(...conditions))
     .orderBy(desc(smsCourseElections.electedAt))
     .limit(limit)
@@ -545,4 +554,130 @@ export async function setCourseElection(actor: SmsActor, input: SetElectionInput
     })
     return row ?? null
   })
+}
+
+export interface SetElectionsBatchInput {
+  /** 教师/管理员代选时传；学生本人省略。 */
+  studentId?: unknown
+  termId?: unknown
+  subjectIds?: unknown
+}
+
+/** 代选或本人选科：以本次提交的科目集合为准，未提交的已选科目自动退课。 */
+export async function setStudentElections(actor: SmsActor, input: SetElectionsBatchInput) {
+  const organizationId = requireSmsOrganization(actor)
+  if (!canUseSms(actor, 'create', 'elections')) {
+    throw createError({ statusCode: 403, statusMessage: 'Forbidden', message: 'No permission to change course elections' })
+  }
+  const termId = positiveId(input.termId, 'termId')
+  await assertTermInContext(actor, termId)
+  if (!Array.isArray(input.subjectIds)) {
+    throw createError({ statusCode: 400, message: 'subjectIds 必须是数组' })
+  }
+  const subjectIds = [...new Set(input.subjectIds.map(Number))]
+  if (subjectIds.length > 20) {
+    throw createError({ statusCode: 400, message: '单次最多选择 20 门科目' })
+  }
+  if (subjectIds.some(id => !Number.isSafeInteger(id) || id <= 0)) {
+    throw createError({ statusCode: 400, message: 'subjectIds 必须是正整数' })
+  }
+  for (const subjectId of subjectIds) await assertSubjectInContext(actor, subjectId)
+
+  const student = await (async () => {
+    if (input.studentId === undefined || input.studentId === null || input.studentId === '') {
+      return await resolveStudent(actor)
+    }
+    if (actor.roleName === 'guardian') {
+      throw createError({ statusCode: 403, message: '家长不能代选科目' })
+    }
+    const row = await getStudent(actor, positiveId(input.studentId, 'studentId'))
+    return { id: row.id, classId: row.classId, name: row.name }
+  })()
+
+  const current = await db.select({
+    subjectId: smsCourseElections.subjectId,
+    status: smsCourseElections.status
+  }).from(smsCourseElections).where(and(
+    eq(smsCourseElections.organizationId, organizationId),
+    eq(smsCourseElections.studentId, student.id),
+    eq(smsCourseElections.termId, termId)
+  ))
+  const selected = new Set(current.filter(row => row.status === 'selected').map(row => row.subjectId))
+  const newSubjectIds = subjectIds.filter(id => !selected.has(id))
+
+  if (newSubjectIds.length > 0) {
+    const subjects = await db.select({ id: smsSubjects.id, capacity: smsSubjects.capacity })
+      .from(smsSubjects)
+      .where(and(
+        eq(smsSubjects.organizationId, organizationId),
+        inArray(smsSubjects.id, newSubjectIds),
+        isNull(smsSubjects.deletedAt)
+      ))
+    if (subjects.length !== newSubjectIds.length) {
+      throw createError({ statusCode: 404, message: '包含不存在或已删除的科目' })
+    }
+    const counted = await db.select({
+      subjectId: smsCourseElections.subjectId,
+      value: sql<number>`count(*)::int`
+    }).from(smsCourseElections)
+      .where(and(
+        eq(smsCourseElections.organizationId, organizationId),
+        eq(smsCourseElections.termId, termId),
+        eq(smsCourseElections.status, 'selected'),
+        inArray(smsCourseElections.subjectId, newSubjectIds)
+      ))
+      .groupBy(smsCourseElections.subjectId)
+    const counts = new Map(counted.map(row => [row.subjectId, Number(row.value)]))
+    for (const subject of subjects) {
+      if (subject.capacity !== null && (counts.get(subject.id) ?? 0) >= subject.capacity) {
+        throw createError({ statusCode: 409, message: `科目 #${subject.id} 容量已满` })
+      }
+    }
+  }
+
+  const result = await db.transaction(async (tx) => {
+    for (const subjectId of subjectIds) {
+      await tx.insert(smsCourseElections).values({
+        organizationId,
+        tenantId: actor.tenantId ?? null,
+        studentId: student.id,
+        subjectId,
+        termId,
+        status: 'selected'
+      }).onConflictDoUpdate({
+        target: [
+          smsCourseElections.organizationId,
+          smsCourseElections.studentId,
+          smsCourseElections.subjectId,
+          smsCourseElections.termId
+        ],
+        set: { status: 'selected', updatedAt: new Date() }
+      })
+    }
+    const dropConditions = [
+      eq(smsCourseElections.organizationId, organizationId),
+      eq(smsCourseElections.studentId, student.id),
+      eq(smsCourseElections.termId, termId),
+      eq(smsCourseElections.status, 'selected')
+    ]
+    if (subjectIds.length > 0) dropConditions.push(notInArray(smsCourseElections.subjectId, subjectIds))
+    const dropped = await tx.update(smsCourseElections)
+      .set({ status: 'dropped', updatedAt: new Date() })
+      .where(and(...dropConditions))
+      .returning({ id: smsCourseElections.id })
+    await writeAudit(tx, {
+      actorUserId: actor.userId,
+      tenantId: actor.tenantId ?? undefined,
+      organizationId,
+      moduleId: 'sms',
+      action: 'election.batch',
+      resource: 'elections',
+      recordId: student.id,
+      after: { studentId: student.id, termId, subjectIds, dropped: dropped.length },
+      source: 'sms-service'
+    })
+    return { selected: subjectIds.length, dropped: dropped.length }
+  })
+
+  return { studentId: student.id, termId, ...result }
 }
