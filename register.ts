@@ -28,6 +28,61 @@ import {
   searchStudents,
   type CreateStudentInput
 } from './server/students'
+import { batchMarkAttendance, listAttendanceRoster } from './server/attendance'
+import {
+  applyLeave,
+  cancelLeave,
+  canApproveLeave,
+  decideLeave,
+  listLeaveRequests
+} from './server/leave'
+import {
+  canGenerateReportCard,
+  canPublishScores,
+  createExam,
+  generateReportCard,
+  getScoreSheet,
+  listExams,
+  listScores,
+  publishExam,
+  saveScores
+} from './server/exams'
+import {
+  canConvertApplications,
+  canReviewApplications,
+  convertApplication,
+  createAdmissionCycle,
+  createApplication,
+  listAdmissionCycles,
+  listApplications,
+  reviewApplication
+} from './server/admissions'
+import {
+  canPublishTimetable,
+  createTimetableEntry,
+  listTimetable,
+  publishTimetable
+} from './server/timetable'
+import {
+  approveRefund,
+  canApproveRefund,
+  createFeeItem,
+  createInvoice,
+  listFeeItems,
+  listInvoices,
+  listRefunds,
+  recordPayment,
+  requestRefund
+} from './server/finance'
+import { createAsset, listAssets, transferAsset } from './server/assets'
+import { borrowBook, createBook, listBooks, listLoans, returnBook } from './server/library'
+import {
+  attendanceReport,
+  canExportReports,
+  exportReport,
+  financeReport,
+  scoreReport
+} from './server/reports'
 import { classInContext, assertAcademicYearInContext, assertGradeInContext, assertSubjectInContext, assertTermInContext } from './server/academics'
 import { assertStudentInContext } from './server/enrollment'
 import { assertGuardianInContext, guardianStudentIds } from './server/guardians'
@@ -601,6 +656,384 @@ const smsApis: ModuleApiDefinition<SmsActor>[] = [
     schema: isRecord,
     authorize: actor => canUseSms(actor, 'create'),
     handler: (_event, actor, input) => createStudent(actor, input as CreateStudentInput)
+  },
+  {
+    id: 'sms.leave.list',
+    moduleId: 'sms',
+    method: 'GET',
+    path: 'sms/leave',
+    schema: isRecord,
+    authorize: actor => canUseSms(actor, 'read', 'leave'),
+    handler: (_event, actor, input) => listLeaveRequests(actor, isRecord(input) ? input : {})
+  },
+  {
+    id: 'sms.leave.apply',
+    moduleId: 'sms',
+    method: 'POST',
+    path: 'sms/leave',
+    schema: isRecord,
+    authorize: actor => canUseSms(actor, 'create', 'leave'),
+    handler: (_event, actor, input) => applyLeave(actor, input as Record<string, unknown>)
+  },
+  {
+    id: 'sms.leave.decide',
+    moduleId: 'sms',
+    method: 'POST',
+    path: 'sms/leave/decide',
+    schema: isRecord,
+    authorize: actor => canApproveLeave(actor),
+    handler: (_event, actor, input) => decideLeave(actor, input as Record<string, unknown>)
+  },
+  {
+    id: 'sms.leave.cancel',
+    moduleId: 'sms',
+    method: 'POST',
+    path: 'sms/leave/cancel',
+    schema: isRecord,
+    authorize: actor => canUseSms(actor, 'create', 'leave'),
+    handler: (_event, actor, input) => cancelLeave(actor, Number((input as Record<string, unknown>).leaveId))
+  },
+  {
+    id: 'sms.attendance.roster',
+    moduleId: 'sms',
+    method: 'GET',
+    path: 'sms/attendance/roster',
+    schema: isRecord,
+    authorize: actor => canUseSms(actor, 'read', 'attendance'),
+    handler: (_event, actor, input) => listAttendanceRoster(actor, isRecord(input) ? input : {})
+  },
+  {
+    id: 'sms.attendance.batch-mark',
+    moduleId: 'sms',
+    method: 'POST',
+    path: 'sms/attendance/batch',
+    schema: isRecord,
+    authorize: actor => canUseSms(actor, 'update', 'attendance'),
+    handler: (_event, actor, input) => batchMarkAttendance(actor, input as Record<string, unknown>)
+  },
+  {
+    id: 'sms.exams.list',
+    moduleId: 'sms',
+    method: 'GET',
+    path: 'sms/exams',
+    schema: isRecord,
+    authorize: actor => canUseSms(actor, 'read', 'scores'),
+    handler: (_event, actor, input) => listExams(actor, isRecord(input) ? input : {})
+  },
+  {
+    id: 'sms.exams.create',
+    moduleId: 'sms',
+    method: 'POST',
+    path: 'sms/exams',
+    schema: isRecord,
+    authorize: actor => canUseSms(actor, 'create', 'exams'),
+    handler: (_event, actor, input) => createExam(actor, input as Record<string, unknown>)
+  },
+  {
+    id: 'sms.scores.sheet',
+    moduleId: 'sms',
+    method: 'GET',
+    path: 'sms/scores/sheet',
+    schema: isRecord,
+    authorize: actor => canUseSms(actor, 'read', 'scores'),
+    handler: (_event, actor, input) => getScoreSheet(actor, isRecord(input) ? input : {})
+  },
+  {
+    id: 'sms.scores.save',
+    moduleId: 'sms',
+    method: 'POST',
+    path: 'sms/scores',
+    schema: isRecord,
+    authorize: actor => canUseSms(actor, 'update', 'scores'),
+    handler: (_event, actor, input) => saveScores(actor, input as Record<string, unknown>)
+  },
+  {
+    id: 'sms.scores.publish',
+    moduleId: 'sms',
+    method: 'POST',
+    path: 'sms/scores/publish',
+    schema: isRecord,
+    authorize: actor => canPublishScores(actor),
+    handler: (_event, actor, input) => publishExam(actor, Number((input as Record<string, unknown>).examId))
+  },
+  {
+    id: 'sms.scores.query',
+    moduleId: 'sms',
+    method: 'GET',
+    path: 'sms/scores',
+    schema: isRecord,
+    authorize: actor => canUseSms(actor, 'read', 'scores'),
+    handler: (_event, actor, input) => listScores(actor, isRecord(input) ? input : {})
+  },
+  {
+    id: 'sms.report-cards.generate',
+    moduleId: 'sms',
+    method: 'POST',
+    path: 'sms/report-cards',
+    schema: isRecord,
+    authorize: actor => canGenerateReportCard(actor),
+    handler: (_event, actor, input) => generateReportCard(actor, input as Record<string, unknown>)
+  },
+  {
+    id: 'sms.admission-cycles.list',
+    moduleId: 'sms',
+    method: 'GET',
+    path: 'sms/admission-cycles',
+    schema: isRecord,
+    authorize: actor => canUseSms(actor, 'read', 'applications'),
+    handler: (_event, actor, input) => listAdmissionCycles(actor, isRecord(input) ? input : {})
+  },
+  {
+    id: 'sms.admission-cycles.create',
+    moduleId: 'sms',
+    method: 'POST',
+    path: 'sms/admission-cycles',
+    schema: isRecord,
+    authorize: actor => actor.roleName === 'admin' || actor.permissions?.includes('sms.admission-cycles.create') === true,
+    handler: (_event, actor, input) => createAdmissionCycle(actor, input as Record<string, unknown>)
+  },
+  {
+    id: 'sms.applications.list',
+    moduleId: 'sms',
+    method: 'GET',
+    path: 'sms/applications',
+    schema: isRecord,
+    authorize: actor => canUseSms(actor, 'read', 'applications'),
+    handler: (_event, actor, input) => listApplications(actor, isRecord(input) ? input : {})
+  },
+  {
+    id: 'sms.applications.create',
+    moduleId: 'sms',
+    method: 'POST',
+    path: 'sms/applications',
+    schema: isRecord,
+    authorize: actor => canUseSms(actor, 'create', 'applications'),
+    handler: (_event, actor, input) => createApplication(actor, input as Record<string, unknown>)
+  },
+  {
+    id: 'sms.applications.review',
+    moduleId: 'sms',
+    method: 'POST',
+    path: 'sms/applications/review',
+    schema: isRecord,
+    authorize: actor => canReviewApplications(actor),
+    handler: (_event, actor, input) => reviewApplication(actor, input as Record<string, unknown>)
+  },
+  {
+    id: 'sms.applications.convert',
+    moduleId: 'sms',
+    method: 'POST',
+    path: 'sms/applications/convert',
+    schema: isRecord,
+    authorize: actor => canConvertApplications(actor),
+    handler: (_event, actor, input) => convertApplication(actor, input as Record<string, unknown>)
+  },
+  {
+    id: 'sms.timetable.list',
+    moduleId: 'sms',
+    method: 'GET',
+    path: 'sms/timetable',
+    schema: isRecord,
+    authorize: actor => canUseSms(actor, 'read', 'timetable'),
+    handler: (_event, actor, input) => listTimetable(actor, isRecord(input) ? input : {})
+  },
+  {
+    id: 'sms.timetable.create',
+    moduleId: 'sms',
+    method: 'POST',
+    path: 'sms/timetable',
+    schema: isRecord,
+    authorize: actor => canUseSms(actor, 'update', 'timetable'),
+    handler: (_event, actor, input) => createTimetableEntry(actor, input as Record<string, unknown>)
+  },
+  {
+    id: 'sms.timetable.publish',
+    moduleId: 'sms',
+    method: 'POST',
+    path: 'sms/timetable/publish',
+    schema: isRecord,
+    authorize: actor => canPublishTimetable(actor),
+    handler: (_event, actor, input) => publishTimetable(actor, isRecord(input) ? input : {})
+  },
+  {
+    id: 'sms.fees.list',
+    moduleId: 'sms',
+    method: 'GET',
+    path: 'sms/fees',
+    schema: isRecord,
+    authorize: actor => canUseSms(actor, 'read', 'finance'),
+    handler: (_event, actor, input) => listFeeItems(actor, isRecord(input) ? input : {})
+  },
+  {
+    id: 'sms.fees.create',
+    moduleId: 'sms',
+    method: 'POST',
+    path: 'sms/fees',
+    schema: isRecord,
+    authorize: actor => canUseSms(actor, 'update', 'finance'),
+    handler: (_event, actor, input) => createFeeItem(actor, input as Record<string, unknown>)
+  },
+  {
+    id: 'sms.invoices.list',
+    moduleId: 'sms',
+    method: 'GET',
+    path: 'sms/invoices',
+    schema: isRecord,
+    authorize: actor => canUseSms(actor, 'read', 'finance'),
+    handler: (_event, actor, input) => listInvoices(actor, isRecord(input) ? input : {})
+  },
+  {
+    id: 'sms.invoices.create',
+    moduleId: 'sms',
+    method: 'POST',
+    path: 'sms/invoices',
+    schema: isRecord,
+    authorize: actor => canUseSms(actor, 'update', 'finance'),
+    handler: (_event, actor, input) => createInvoice(actor, input as Record<string, unknown>)
+  },
+  {
+    id: 'sms.payments.create',
+    moduleId: 'sms',
+    method: 'POST',
+    path: 'sms/payments',
+    schema: isRecord,
+    authorize: actor => canUseSms(actor, 'update', 'finance'),
+    handler: (_event, actor, input) => recordPayment(actor, input as Record<string, unknown>)
+  },
+  {
+    id: 'sms.refunds.list',
+    moduleId: 'sms',
+    method: 'GET',
+    path: 'sms/refunds',
+    schema: isRecord,
+    authorize: actor => canUseSms(actor, 'read', 'finance'),
+    handler: (_event, actor, input) => listRefunds(actor, isRecord(input) ? input : {})
+  },
+  {
+    id: 'sms.refunds.request',
+    moduleId: 'sms',
+    method: 'POST',
+    path: 'sms/refunds',
+    schema: isRecord,
+    authorize: actor => canUseSms(actor, 'update', 'finance'),
+    handler: (_event, actor, input) => requestRefund(actor, input as Record<string, unknown>)
+  },
+  {
+    id: 'sms.refunds.approve',
+    moduleId: 'sms',
+    method: 'POST',
+    path: 'sms/refunds/approve',
+    schema: isRecord,
+    authorize: actor => canApproveRefund(actor),
+    handler: (_event, actor, input) => approveRefund(actor, input as Record<string, unknown>)
+  },
+  {
+    id: 'sms.assets.list',
+    moduleId: 'sms',
+    method: 'GET',
+    path: 'sms/assets',
+    schema: isRecord,
+    authorize: actor => canUseSms(actor, 'read', 'assets'),
+    handler: (_event, actor, input) => listAssets(actor, isRecord(input) ? input : {})
+  },
+  {
+    id: 'sms.assets.create',
+    moduleId: 'sms',
+    method: 'POST',
+    path: 'sms/assets',
+    schema: isRecord,
+    authorize: actor => canUseSms(actor, 'update', 'assets'),
+    handler: (_event, actor, input) => createAsset(actor, input as Record<string, unknown>)
+  },
+  {
+    id: 'sms.assets.transfer',
+    moduleId: 'sms',
+    method: 'POST',
+    path: 'sms/assets/transfer',
+    schema: isRecord,
+    authorize: actor => canUseSms(actor, 'update', 'assets'),
+    handler: (_event, actor, input) => transferAsset(actor, input as Record<string, unknown>)
+  },
+  {
+    id: 'sms.books.list',
+    moduleId: 'sms',
+    method: 'GET',
+    path: 'sms/books',
+    schema: isRecord,
+    authorize: actor => canUseSms(actor, 'read', 'library'),
+    handler: (_event, actor, input) => listBooks(actor, isRecord(input) ? input : {})
+  },
+  {
+    id: 'sms.books.create',
+    moduleId: 'sms',
+    method: 'POST',
+    path: 'sms/books',
+    schema: isRecord,
+    authorize: actor => canUseSms(actor, 'update', 'library'),
+    handler: (_event, actor, input) => createBook(actor, input as Record<string, unknown>)
+  },
+  {
+    id: 'sms.loans.list',
+    moduleId: 'sms',
+    method: 'GET',
+    path: 'sms/loans',
+    schema: isRecord,
+    authorize: actor => canUseSms(actor, 'read', 'library'),
+    handler: (_event, actor, input) => listLoans(actor, isRecord(input) ? input : {})
+  },
+  {
+    id: 'sms.loans.borrow',
+    moduleId: 'sms',
+    method: 'POST',
+    path: 'sms/loans/borrow',
+    schema: isRecord,
+    authorize: actor => canUseSms(actor, 'update', 'library'),
+    handler: (_event, actor, input) => borrowBook(actor, input as Record<string, unknown>)
+  },
+  {
+    id: 'sms.loans.return',
+    moduleId: 'sms',
+    method: 'POST',
+    path: 'sms/loans/return',
+    schema: isRecord,
+    authorize: actor => canUseSms(actor, 'update', 'library'),
+    handler: (_event, actor, input) => returnBook(actor, Number((input as Record<string, unknown>).loanId))
+  },
+  {
+    id: 'sms.reports.attendance',
+    moduleId: 'sms',
+    method: 'GET',
+    path: 'sms/reports/attendance',
+    schema: isRecord,
+    authorize: actor => canUseSms(actor, 'read', 'reports'),
+    handler: (_event, actor, input) => attendanceReport(actor, isRecord(input) ? input : {})
+  },
+  {
+    id: 'sms.reports.scores',
+    moduleId: 'sms',
+    method: 'GET',
+    path: 'sms/reports/scores',
+    schema: isRecord,
+    authorize: actor => canUseSms(actor, 'read', 'reports'),
+    handler: (_event, actor, input) => scoreReport(actor, isRecord(input) ? input : {})
+  },
+  {
+    id: 'sms.reports.finance',
+    moduleId: 'sms',
+    method: 'GET',
+    path: 'sms/reports/finance',
+    schema: isRecord,
+    authorize: actor => canUseSms(actor, 'read', 'reports') && canUseSms(actor, 'read', 'finance'),
+    handler: (_event, actor, input) => financeReport(actor, isRecord(input) ? input : {})
+  },
+  {
+    id: 'sms.reports.export',
+    moduleId: 'sms',
+    method: 'POST',
+    path: 'sms/reports/export',
+    schema: isRecord,
+    authorize: actor => canExportReports(actor),
+    handler: (_event, actor, input) => exportReport(actor, input as Record<string, unknown>)
   }
 ]
 
@@ -624,7 +1057,71 @@ export function isSmsChatTableProps(value: unknown): value is SmsChatTableProps 
   return true
 }
 
-const smsUi: UiDefinition<SmsChatTableProps, Record<string, unknown>>[] = [
+export type SmsLeaveTableProps = {
+  status?: 'pending' | 'approved' | 'rejected' | 'cancelled'
+  limit?: number
+}
+
+const LEAVE_STATUS_VALUES = ['pending', 'approved', 'rejected', 'cancelled']
+
+export function isSmsLeaveTableProps(value: unknown): value is SmsLeaveTableProps {
+  if (!isRecord(value)) return false
+  if ('rows' in value || 'leaves' in value || 'requests' in value) return false
+  if (value.status !== undefined && !LEAVE_STATUS_VALUES.includes(String(value.status))) return false
+  if (value.limit !== undefined) {
+    if (typeof value.limit !== 'number' || !Number.isSafeInteger(value.limit)) return false
+    if (value.limit < 1 || value.limit > 200) return false
+  }
+  return true
+}
+
+export type SmsAttendanceRosterProps = {
+  classId?: number
+  date?: string
+  session?: 'full_day' | 'morning' | 'afternoon' | 'period'
+}
+
+const ATTENDANCE_SESSION_VALUES = ['full_day', 'morning', 'afternoon', 'period']
+
+export function isSmsAttendanceRosterProps(value: unknown): value is SmsAttendanceRosterProps {
+  if (!isRecord(value)) return false
+  if ('rows' in value || 'students' in value) return false
+  if (value.classId !== undefined) {
+    if (typeof value.classId !== 'number' || !Number.isSafeInteger(value.classId) || value.classId <= 0) return false
+  }
+  if (value.date !== undefined) {
+    if (typeof value.date !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value.date)) return false
+  }
+  if (value.session !== undefined && !ATTENDANCE_SESSION_VALUES.includes(String(value.session))) return false
+  return true
+}
+
+export type SmsGradeEntrySheetProps = { examId: number }
+
+export function isSmsGradeEntrySheetProps(value: unknown): value is SmsGradeEntrySheetProps {
+  if (!isRecord(value)) return false
+  if ('rows' in value || 'scores' in value || 'students' in value) return false
+  return typeof value.examId === 'number' && Number.isSafeInteger(value.examId) && value.examId > 0
+}
+
+export type SmsTimetableGridProps = {
+  classId?: number
+  termId?: number
+  status?: 'draft' | 'published'
+}
+
+export function isSmsTimetableGridProps(value: unknown): value is SmsTimetableGridProps {
+  if (!isRecord(value)) return false
+  if ('rows' in value || 'entries' in value || 'lessons' in value) return false
+  for (const key of ['classId', 'termId'] as const) {
+    const id = value[key]
+    if (id !== undefined && (typeof id !== 'number' || !Number.isSafeInteger(id) || id <= 0)) return false
+  }
+  if (value.status !== undefined && value.status !== 'draft' && value.status !== 'published') return false
+  return true
+}
+
+const smsUi: UiDefinition<unknown, Record<string, unknown>>[] = [
   {
     id: 'sms.student-table',
     moduleId: 'sms',
@@ -635,7 +1132,7 @@ const smsUi: UiDefinition<SmsChatTableProps, Record<string, unknown>>[] = [
     interactions: { detail: true, edit: { permission: 'sms.students.update' } },
     appsPath: '/dashboard/students',
     schema: isSmsChatTableProps,
-    render: props => ({ component: 'sms.student-table', props })
+    render: props => ({ component: 'sms.student-table', props: props as SmsChatTableProps })
   },
   {
     id: 'sms.teacher-table',
@@ -647,9 +1144,57 @@ const smsUi: UiDefinition<SmsChatTableProps, Record<string, unknown>>[] = [
     interactions: { detail: true, edit: { permission: 'sms.teachers.update' } },
     appsPath: '/dashboard/teachers',
     schema: isSmsChatTableProps,
-    render: props => ({ component: 'sms.teacher-table', props })
+    render: props => ({ component: 'sms.teacher-table', props: props as SmsChatTableProps })
   },
-  ...generatedChatComponents
+  {
+    id: 'sms.leave-table',
+    moduleId: 'sms',
+    label: '请假列表',
+    description: '请假申请列表，可查看详情；有审批权限时可同意/驳回',
+    propsHint: 'status?: "pending"|"approved"|"rejected"|"cancelled", limit?: number',
+    version: '1.0',
+    interactions: { detail: true, edit: { permission: 'sms.leave.approve' } },
+    appsPath: '/sms',
+    schema: isSmsLeaveTableProps,
+    render: props => ({ component: 'sms.leave-table', props: props as SmsLeaveTableProps })
+  },
+  {
+    id: 'sms.attendance-roster',
+    moduleId: 'sms',
+    label: '班级考勤名单',
+    description: '按班级/日期查看考勤名单并批量标记；需考勤更新权限',
+    propsHint: 'classId?: number, date?: "YYYY-MM-DD", session?: "full_day"|"morning"|"afternoon"|"period"',
+    version: '1.0',
+    interactions: { detail: true, edit: { permission: 'sms.attendance.update' } },
+    appsPath: '/sms',
+    schema: isSmsAttendanceRosterProps,
+    render: props => ({ component: 'sms.attendance-roster', props: props as SmsAttendanceRosterProps })
+  },
+  {
+    id: 'sms.grade-entry-sheet',
+    moduleId: 'sms',
+    label: '成绩录入表',
+    description: '按考试批量录入/更正成绩；仅草稿考试可编辑',
+    propsHint: 'examId: number',
+    version: '1.0',
+    interactions: { detail: true, edit: { permission: 'sms.scores.update' } },
+    appsPath: '/sms',
+    schema: isSmsGradeEntrySheetProps,
+    render: props => ({ component: 'sms.grade-entry-sheet', props: props as SmsGradeEntrySheetProps })
+  },
+  {
+    id: 'sms.timetable-grid',
+    moduleId: 'sms',
+    label: '课表网格',
+    description: '按班级/学期查看课表；有更新权限时可新增课程',
+    propsHint: 'classId?: number, termId?: number, status?: "draft"|"published"',
+    version: '1.0',
+    interactions: { detail: true, edit: { permission: 'sms.timetable.update' } },
+    appsPath: '/sms',
+    schema: isSmsTimetableGridProps,
+    render: props => ({ component: 'sms.timetable-grid', props: props as SmsTimetableGridProps })
+  },
+  ...(generatedChatComponents as UiDefinition<unknown, Record<string, unknown>>[])
 ]
 
 export interface SmsRegistries {
@@ -674,7 +1219,7 @@ export function registerSmsModule(registries: SmsRegistries): void {
       interactions: ui.interactions,
       appsPath: ui.appsPath,
       schema: ui.schema,
-      render: props => ui.render(props as SmsChatTableProps)
+      render: props => ui.render(props)
     })
   }
 }

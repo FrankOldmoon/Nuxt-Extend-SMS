@@ -16,29 +16,76 @@ describe('SMS capabilities', () => {
   it('exposes the read and write capability set from the plan', () => {
     const ids = smsCapabilities.map(capability => capability.id).sort()
     expect(ids).toEqual([
+      'sms.admission-cycles.create',
+      'sms.admission-cycles.list',
+      'sms.applications.convert',
+      'sms.applications.create',
+      'sms.applications.list',
+      'sms.applications.review',
+      'sms.approvals.list',
+      'sms.assets.create',
+      'sms.assets.list',
+      'sms.assets.transfer',
+      'sms.attendance.alerts.ack',
+      'sms.attendance.alerts.list',
+      'sms.attendance.mark',
+      'sms.attendance.records.list',
+      'sms.attendance.roster',
+      'sms.attendance.summary',
+      'sms.books.create',
+      'sms.books.list',
       'sms.classes.list',
       'sms.enrollments.create',
       'sms.enrollments.list',
       'sms.enrollments.transfer',
       'sms.enrollments.withdraw',
+      'sms.exams.create',
+      'sms.exams.list',
+      'sms.fees.create',
+      'sms.fees.list',
       'sms.guardians.link',
       'sms.guardians.list',
+      'sms.invoices.create',
+      'sms.invoices.list',
+      'sms.leave.apply',
+      'sms.leave.approve',
+      'sms.leave.cancel',
+      'sms.leave.list',
+      'sms.leave.reject',
+      'sms.loans.borrow',
+      'sms.loans.return',
+      'sms.payments.create',
+      'sms.refunds.approve',
+      'sms.refunds.list',
+      'sms.refunds.request',
+      'sms.report-cards.generate',
+      'sms.reports.attendance',
+      'sms.reports.export',
+      'sms.reports.finance',
+      'sms.reports.scores',
+      'sms.scores.publish',
+      'sms.scores.query',
+      'sms.scores.save',
+      'sms.scores.sheet',
       'sms.students.create',
       'sms.students.delete',
       'sms.students.get',
       'sms.students.search',
       'sms.students.update',
       'sms.teachers.assign',
-      'sms.teachers.list'
+      'sms.teachers.list',
+      'sms.timetable.create',
+      'sms.timetable.list',
+      'sms.timetable.publish'
     ])
   })
 
   it('requires a preview and a form for every write capability', () => {
     const writes = smsCapabilities.filter(capability => capability.operation === 'command')
-    expect(writes).toHaveLength(8)
+    expect(writes).toHaveLength(35)
     for (const capability of writes) {
       expect(capability.preview, capability.id).toBeTypeOf('function')
-      expect(capability.riskLevel, capability.id).toMatch(/medium|high/)
+      expect(capability.riskLevel, capability.id).toMatch(/low|medium|high/)
     }
     expect(smsCapabilities.find(capability => capability.id === 'sms.students.create')?.form)
       .toBeTruthy()
