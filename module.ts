@@ -86,11 +86,15 @@ export const smsModule: ModuleDefinition = {
     'sms.elections.create'
   ],
   navigation: [
-    { id: 'sms', label: 'SMS', to: '/sms' },
+    { id: 'sms', label: 'SMS 工作台', to: '/sms' },
     { id: 'sms-approvals', label: '审批收件箱', to: '/sms/approvals' },
+    { id: 'sms-students', label: '学生管理', to: '/sms/students' },
+    { id: 'sms-classes', label: '班级管理', to: '/sms/classes' },
+    { id: 'sms-scores', label: '成绩查询', to: '/sms/scores' },
+    { id: 'sms-scores-import', label: '成绩导入', to: '/sms/scores/import' },
     { id: 'sms-knowledge', label: '知识库管理', to: '/sms/knowledge' },
-    { id: 'sms-notifications', label: '通知偏好', to: '/sms/notifications' },
-    { id: 'sms-scores-import', label: '成绩导入', to: '/sms/scores/import' }
+    { id: 'sms-notifications', label: '通知中心', to: '/sms/notifications' },
+    { id: 'sms-notification-preferences', label: '通知偏好', to: '/sms/notifications/preferences' }
   ],
   database: [
     'sms_academic_years',
@@ -141,6 +145,9 @@ export const smsModule: ModuleDefinition = {
   api: [
     'GET /api/modules/sms/students',
     'POST /api/modules/sms/students',
+    'GET /api/modules/sms/classes',
+    'GET /api/modules/sms/subjects',
+    'GET /api/modules/sms/search',
     'GET /api/modules/sms/leave',
     'POST /api/modules/sms/leave',
     'POST /api/modules/sms/leave/decide',
@@ -204,6 +211,7 @@ export const smsModule: ModuleDefinition = {
     'POST /api/modules/sms/scores/import',
     'GET /api/modules/sms/approvals',
     'POST /api/modules/sms/approvals/reassign',
+    'POST /api/modules/sms/approvals/decide',
     'GET /api/modules/sms/notifications/preferences',
     'PUT /api/modules/sms/notifications/preferences',
     'GET /api/modules/sms/agent-tasks/events',

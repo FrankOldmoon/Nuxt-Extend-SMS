@@ -10,7 +10,7 @@
  * immutable `sms_score_revisions` row. Publishing is a high-risk, second-person
  * capability and freezes the exam.
  */
-import { and, asc, desc, eq, inArray, isNull, or, sql } from 'drizzle-orm'
+import { and, asc, desc, eq, ilike, inArray, isNull, or, sql } from 'drizzle-orm'
 import { createError } from 'h3'
 import { db, writeAudit } from '../../../server/sdk'
 import {
@@ -654,6 +654,8 @@ export interface ScoreQuery {
   examId?: unknown
   studentId?: unknown
   classId?: unknown
+  /** 学生姓名或学号片段。 */
+  query?: unknown
   limit?: unknown
 }
 
@@ -684,6 +686,14 @@ export async function listScores(actor: SmsActor, options: ScoreQuery = {}) {
   if (examId) conditions.push(eq(smsExamScores.examId, examId))
   const classId = optionalId(options.classId)
   if (classId) conditions.push(eq(smsExams.classId, classId))
+  const query = typeof options.query === 'string' ? options.query.trim().slice(0, 80) : ''
+  if (query) {
+    const pattern = `%${query}%`
+    conditions.push(or(
+      ilike(smsStudents.name, pattern),
+      ilike(smsStudents.studentNo, pattern)
+    )!)
+  }
 
   const limit = Math.min(Math.max(Math.floor(Number(options.limit ?? 100) || 100), 1), 200)
   const rows = await db.select({

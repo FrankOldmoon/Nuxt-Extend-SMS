@@ -102,6 +102,8 @@ import { advanceAgentTask, createAgentTask, listAgentTaskEvents, listAgentTasks 
 import { listEvaluationMetrics, recordEvaluationMetric } from './server/evaluation'
 import { buildSmsMetrics, formatPrometheusMetrics, queryAuditLogs } from './server/observability'
 import { listApprovalInbox, reassignApprovalTask } from './server/approvals'
+import { decideApprovalBatch } from './server/approvalActions'
+import { searchSms } from './server/search'
 import {
   createAssignment,
   gradeSubmission,
@@ -110,7 +112,7 @@ import {
   setCourseElection,
   submitAssignment
 } from './server/teaching'
-import { classInContext, assertAcademicYearInContext, assertGradeInContext, assertSubjectInContext, assertTermInContext } from './server/academics'
+import { classInContext, assertAcademicYearInContext, assertGradeInContext, assertSubjectInContext, assertTermInContext, listClasses, listSubjects } from './server/academics'
 import { assertStudentInContext } from './server/enrollment'
 import { assertGuardianInContext, guardianStudentIds } from './server/guardians'
 import {
@@ -675,8 +677,10 @@ const smsApis: ModuleApiDefinition<SmsActor>[] = [
         : typeof args.query === 'string' ? args.query : undefined
       const limit = Number(args.limit)
       const cursor = Number(args.cursor)
+      const classId = Number(args.classId)
       return searchStudents(actor, {
         query,
+        classId: Number.isSafeInteger(classId) && classId > 0 ? classId : undefined,
         limit: Number.isSafeInteger(limit) ? limit : undefined,
         cursor: Number.isSafeInteger(cursor) ? cursor : undefined
       })
@@ -690,6 +694,39 @@ const smsApis: ModuleApiDefinition<SmsActor>[] = [
     schema: isRecord,
     authorize: actor => canUseSms(actor, 'create'),
     handler: (_event, actor, input) => createStudent(actor, input as CreateStudentInput)
+  },
+  {
+    id: 'sms.classes.list',
+    moduleId: 'sms',
+    method: 'GET',
+    path: 'sms/classes',
+    schema: isRecord,
+    authorize: actor => canUseSms(actor, 'read', 'classes'),
+    handler: (_event, actor, input) => {
+      const args = isRecord(input) ? input : {}
+      const limit = Number(args.limit)
+      return listClasses(actor, {
+        query: typeof args.q === 'string' ? args.q : typeof args.query === 'string' ? args.query : undefined,
+        limit: Number.isSafeInteger(limit) ? limit : undefined
+      })
+    }
+  },
+  {
+    id: 'sms.subjects.list',
+    moduleId: 'sms',
+    method: 'GET',
+    path: 'sms/subjects',
+    schema: isRecord,
+    authorize: actor => canUseSms(actor, 'read', 'subjects'),
+    handler: (_event, actor, input) => {
+      const args = isRecord(input) ? input : {}
+      const limit = Number(args.limit)
+      return listSubjects(
+        actor,
+        typeof args.q === 'string' ? args.q : typeof args.query === 'string' ? args.query : undefined,
+        Number.isSafeInteger(limit) ? limit : undefined
+      )
+    }
   },
   {
     id: 'sms.leave.list',
@@ -1175,6 +1212,16 @@ const smsApis: ModuleApiDefinition<SmsActor>[] = [
     handler: (_event, actor) => buildWorkbench(actor)
   },
   {
+    id: 'sms.search',
+    moduleId: 'sms',
+    method: 'GET',
+    path: 'sms/search',
+    schema: isRecord,
+    rateLimit: { max: 120, windowMs: 60_000 },
+    authorize: actor => Boolean(actor.organizationId),
+    handler: (_event, actor, input) => searchSms(actor, isRecord(input) ? input : {})
+  },
+  {
     id: 'sms.approvals.inbox',
     moduleId: 'sms',
     method: 'GET',
@@ -1193,6 +1240,16 @@ const smsApis: ModuleApiDefinition<SmsActor>[] = [
     rateLimit: { max: 30, windowMs: 60_000 },
     authorize: actor => canApproveLeave(actor) || canApproveRefund(actor),
     handler: (_event, actor, input) => reassignApprovalTask(actor, input as Record<string, unknown>)
+  },
+  {
+    id: 'sms.approvals.decide',
+    moduleId: 'sms',
+    method: 'POST',
+    path: 'sms/approvals/decide',
+    schema: isRecord,
+    rateLimit: { max: 20, windowMs: 60_000 },
+    authorize: actor => canApproveLeave(actor) || canApproveRefund(actor),
+    handler: (_event, actor, input) => decideApprovalBatch(actor, isRecord(input) ? input : {})
   },
   {
     id: 'sms.students.import',

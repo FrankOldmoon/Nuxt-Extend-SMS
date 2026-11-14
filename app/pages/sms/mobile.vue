@@ -199,8 +199,11 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="min-h-0 flex-1 overflow-y-auto p-4">
-    <div class="mx-auto max-w-xl space-y-4">
-      <header class="flex items-center justify-between">
+    <div class="mx-auto max-w-xl space-y-4 pb-16">
+      <header
+        id="sms-mobile-me"
+        class="flex items-center justify-between scroll-mt-4"
+      >
         <div>
           <h1 class="text-lg font-semibold text-highlighted">
             移动工作台
@@ -377,5 +380,50 @@ onBeforeUnmount(() => {
         数据范围与审批仍由服务端权限决定
       </p>
     </div>
+
+    <nav class="fixed inset-x-0 bottom-0 z-30 border-t border-default bg-default/95 backdrop-blur md:hidden">
+      <div class="mx-auto grid max-w-xl grid-cols-4">
+        <NuxtLink
+          to="/sms"
+          class="flex flex-col items-center gap-1 py-2 text-[11px] text-muted"
+        >
+          <UIcon
+            name="i-lucide-layout-dashboard"
+            class="size-4"
+          />
+          工作台
+        </NuxtLink>
+        <NuxtLink
+          to="/sms/approvals"
+          class="flex flex-col items-center gap-1 py-2 text-[11px] text-muted"
+        >
+          <UIcon
+            name="i-lucide-check-square"
+            class="size-4"
+          />
+          审批
+        </NuxtLink>
+        <NuxtLink
+          to="/sms/notifications"
+          class="flex flex-col items-center gap-1 py-2 text-[11px] text-muted"
+        >
+          <UIcon
+            name="i-lucide-bell"
+            class="size-4"
+          />
+          通知
+        </NuxtLink>
+        <a
+          href="#sms-mobile-me"
+          class="flex flex-col items-center gap-1 py-2 text-[11px] text-primary"
+        >
+          <UIcon
+            name="i-lucide-user-round"
+            class="size-4"
+          />
+          我的
+        </a>
+      </div>
+    </nav>
   </div>
 </template>

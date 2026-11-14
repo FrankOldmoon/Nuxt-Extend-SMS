@@ -8,7 +8,7 @@
  * Recipients are always resolved server-side: callers pass a student/class id,
  * never a list of user ids they merely "claim" to own.
  */
-import { and, desc, eq, inArray, isNull, lt, sql } from 'drizzle-orm'
+import { and, desc, eq, ilike, inArray, isNull, lt, or, sql } from 'drizzle-orm'
 import { createError } from 'h3'
 import { createHmac } from 'node:crypto'
 import { db, pool, writeAudit } from '../../../server/sdk'
@@ -397,6 +397,8 @@ function requireNotificationSend(actor: SmsActor): number {
 export interface NotificationListQuery {
   status?: unknown
   category?: unknown
+  /** 标题/正文关键词。 */
+  query?: unknown
   limit?: unknown
   /** 游标分页：上一页最后一条的 id。 */
   cursor?: unknown
@@ -418,6 +420,14 @@ export async function listNotifications(actor: SmsActor, options: NotificationLi
   }
   if (options.category !== undefined && options.category !== null && options.category !== '') {
     conditions.push(eq(smsNotifications.category, normalizeNotificationCategory(options.category)))
+  }
+  const query = typeof options.query === 'string' ? options.query.trim().slice(0, 80) : ''
+  if (query) {
+    const pattern = `%${query}%`
+    conditions.push(or(
+      ilike(smsNotifications.title, pattern),
+      ilike(smsNotifications.body, pattern)
+    )!)
   }
   const limit = Math.min(Math.max(Math.floor(Number(options.limit ?? 50) || 50), 1), 200)
   return await db.select({

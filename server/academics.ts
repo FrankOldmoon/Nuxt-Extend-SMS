@@ -412,8 +412,12 @@ export async function listClasses(actor: SmsActor, options: { query?: string, li
     id: smsClasses.id,
     name: smsClasses.name,
     academicYearId: smsClasses.academicYearId,
-    gradeId: smsClasses.gradeId
+    academicYearName: smsAcademicYears.name,
+    gradeId: smsClasses.gradeId,
+    gradeName: smsGrades.name
   }).from(smsClasses)
+    .leftJoin(smsAcademicYears, eq(smsAcademicYears.id, smsClasses.academicYearId))
+    .leftJoin(smsGrades, eq(smsGrades.id, smsClasses.gradeId))
     .where(and(...conditions))
     .orderBy(asc(smsClasses.name))
     .limit(limitValue(options.limit))

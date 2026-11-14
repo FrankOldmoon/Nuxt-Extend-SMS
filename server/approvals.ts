@@ -238,6 +238,9 @@ export async function escalateOverdueApprovals(now: Date = new Date()): Promise<
 // 统一审批收件箱（P1）
 // ---------------------------------------------------------------------------
 
+export const APPROVAL_INBOX_STATUSES = ['pending', 'approved', 'rejected', 'cancelled', 'all'] as const
+export type ApprovalInboxStatus = typeof APPROVAL_INBOX_STATUSES[number]
+
 export interface ApprovalInboxItem {
   kind: ApprovalSubjectType
   taskId: number | null
@@ -247,12 +250,22 @@ export interface ApprovalInboxItem {
   assigneeUserId: number | null
   dueAt: string | null
   overdue: boolean
+  status: Exclude<ApprovalInboxStatus, 'all'>
+  comment: string | null
+  decidedAt: string | null
   link: string
 }
 
 export interface ApprovalInboxQuery {
   kind?: unknown
+  status?: unknown
   limit?: unknown
+}
+
+function normalizeInboxStatus(value: unknown): ApprovalInboxStatus {
+  return typeof value === 'string' && (APPROVAL_INBOX_STATUSES as readonly string[]).includes(value)
+    ? value as ApprovalInboxStatus
+    : 'pending'
 }
 
 function hasSchoolWide(actor: SmsActor): boolean {
@@ -275,13 +288,12 @@ export async function listApprovalInbox(
 ): Promise<ApprovalInboxItem[]> {
   const organizationId = requireSmsOrganization(actor)
   const kind = options.kind === 'leave' || options.kind === 'refund' ? options.kind : null
+  const status = normalizeInboxStatus(options.status)
   const limit = Math.min(Math.max(Math.floor(Number(options.limit ?? 50) || 50), 1), 200)
   const now = new Date()
 
-  const conditions = [
-    eq(smsApprovalTasks.organizationId, organizationId),
-    eq(smsApprovalTasks.status, 'pending')
-  ]
+  const conditions = [eq(smsApprovalTasks.organizationId, organizationId)]
+  if (status !== 'all') conditions.push(eq(smsApprovalTasks.status, status))
   if (kind) conditions.push(eq(smsApprovalTasks.subjectType, kind))
   if (!hasSchoolWide(actor)) {
     const approvable = (['leave', 'refund'] as const).filter(item => canApproveKind(actor, item))
@@ -333,11 +345,15 @@ export async function listApprovalInbox(
       title,
       assigneeUserId: task.assigneeUserId,
       dueAt: task.dueAt ? task.dueAt.toISOString() : null,
-      overdue: Boolean(task.dueAt && task.dueAt.getTime() < now.getTime()),
+      overdue: Boolean(task.status === 'pending' && task.dueAt && task.dueAt.getTime() < now.getTime()),
+      status: task.status as Exclude<ApprovalInboxStatus, 'all'>,
+      comment: task.comment ?? null,
+      decidedAt: task.decidedAt ? task.decidedAt.toISOString() : null,
       link: '/sms/approvals'
     }
   })
-  if (kind === 'leave') return items.slice(0, limit)
+  // 只有待办收件箱才需要兼容历史遗留、尚未生成审批步骤的退费。
+  if (status !== 'pending' || kind === 'leave') return items.slice(0, limit)
   return await appendOrphanRefunds(items, actor, organizationId, refundIds, limit)
 }
 
@@ -369,6 +385,9 @@ async function appendOrphanRefunds(
       assigneeUserId: null,
       dueAt: null,
       overdue: false,
+      status: 'pending',
+      comment: null,
+      decidedAt: null,
       link: '/sms/approvals'
     })
   }

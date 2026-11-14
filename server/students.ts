@@ -7,6 +7,7 @@ import { guardianStudentIds } from './guardians'
 
 export interface StudentSearchOptions {
   query?: string
+  classId?: number
   limit?: number
   /** 游标分页：上一页最后一行的 id，返回更早的记录。 */
   cursor?: number
@@ -126,17 +127,23 @@ export async function searchStudents(actor: SmsActor, options: StudentSearchOpti
       ilike(smsStudents.studentNo, `%${query}%`)
     )!)
   }
+  if (options.classId !== undefined && Number.isSafeInteger(options.classId) && options.classId > 0) {
+    conditions.push(eq(smsStudents.classId, options.classId))
+  }
 
   return await db.select({
     id: smsStudents.id,
     name: smsStudents.name,
     studentNo: smsStudents.studentNo,
     classId: smsStudents.classId,
+    className: smsClasses.name,
     organizationId: smsStudents.organizationId
   })
     .from(smsStudents)
+    .leftJoin(smsClasses, eq(smsClasses.id, smsStudents.classId))
     .where(and(...conditions))
-    .orderBy(asc(smsStudents.name))
+    // 按 id 排序保证游标分页稳定（id < cursor），避免按姓名排序时跳行/重复。
+    .orderBy(asc(smsStudents.id))
     .limit(limit)
 }
 

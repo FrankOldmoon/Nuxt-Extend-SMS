@@ -8,8 +8,11 @@
 import { and, eq, inArray, isNull, lt, or, sql } from 'drizzle-orm'
 import { db } from '../../../server/sdk'
 import {
+  smsAdmissionApplications,
   smsApprovalTasks,
   smsAttendanceAlerts,
+  smsExams,
+  smsInvoices,
   smsRefunds,
   smsStudents
 } from './database/schema'
@@ -17,6 +20,8 @@ import { canUseSms, type SmsActor } from './context'
 import { canApproveLeave, hasSchoolWideLeave, listLeaveRequests } from './leave'
 import { hasSchoolWideAttendance, scopedClassIds } from './attendance'
 import { canApproveRefund } from './finance'
+import { canPublishScores, scopedExamClassIds } from './exams'
+import { canReviewApplications } from './admissions'
 import { unreadNotificationCount } from './notifications'
 
 export interface WorkbenchCard {
@@ -86,6 +91,42 @@ async function overdueApprovalCount(actor: SmsActor, organizationId: number): Pr
   const [row] = await db.select({ value: sql<number>`count(*)::int` })
     .from(smsApprovalTasks)
     .where(and(...conditions))
+  return Number(row?.value ?? 0)
+}
+
+/** 未结清账单（未缴 + 部分缴）。学生/家长的范围由 finance 服务负责，这里只对职工展示全校计数。 */
+async function unpaidInvoiceCount(actor: SmsActor, organizationId: number): Promise<number> {
+  if (actor.roleName === 'student' || actor.roleName === 'guardian') return 0
+  const [row] = await db.select({ value: sql<number>`count(*)::int` })
+    .from(smsInvoices)
+    .where(and(
+      eq(smsInvoices.organizationId, organizationId),
+      inArray(smsInvoices.status, ['unpaid', 'partial'])
+    ))
+  return Number(row?.value ?? 0)
+}
+
+/** 待发布成绩：仅统计当前用户可发布范围内的草稿考试。 */
+async function draftExamCount(actor: SmsActor, organizationId: number): Promise<number> {
+  if (!canPublishScores(actor)) return 0
+  const conditions = [eq(smsExams.organizationId, organizationId), eq(smsExams.status, 'draft')]
+  const classIds = await scopedExamClassIds(actor)
+  if (classIds && classIds.length > 0) conditions.push(inArray(smsExams.classId, classIds))
+  if (classIds && classIds.length === 0) return 0
+  const [row] = await db.select({ value: sql<number>`count(*)::int` })
+    .from(smsExams)
+    .where(and(...conditions))
+  return Number(row?.value ?? 0)
+}
+
+/** 待审核报名数。 */
+async function pendingApplicationCount(organizationId: number): Promise<number> {
+  const [row] = await db.select({ value: sql<number>`count(*)::int` })
+    .from(smsAdmissionApplications)
+    .where(and(
+      eq(smsAdmissionApplications.organizationId, organizationId),
+      inArray(smsAdmissionApplications.status, ['submitted', 'reviewing'])
+    ))
   return Number(row?.value ?? 0)
 }
 
@@ -159,6 +200,43 @@ export async function buildWorkbench(actor: SmsActor): Promise<SmsWorkbench> {
       link: '/sms/approvals',
       icon: 'i-lucide-badge-dollar-sign'
     })
+  }
+
+  if (canUseSms(actor, 'read', 'finance')) {
+    const unpaid = await unpaidInvoiceCount(actor, organizationId)
+    if (unpaid > 0) {
+      cards.push({
+        id: 'unpaid-invoices',
+        title: '未结清账单',
+        count: unpaid,
+        link: '/sms/chat',
+        icon: 'i-lucide-receipt-text'
+      })
+    }
+  }
+
+  const draftExams = await draftExamCount(actor, organizationId)
+  if (draftExams > 0) {
+    cards.push({
+      id: 'draft-exams',
+      title: '待发布成绩',
+      count: draftExams,
+      link: '/sms/scores',
+      icon: 'i-lucide-file-check'
+    })
+  }
+
+  if (canReviewApplications(actor)) {
+    const pendingApplications = await pendingApplicationCount(organizationId)
+    if (pendingApplications > 0) {
+      cards.push({
+        id: 'pending-applications',
+        title: '待审核报名',
+        count: pendingApplications,
+        link: '/sms/chat',
+        icon: 'i-lucide-user-plus'
+      })
+    }
   }
 
   return {
