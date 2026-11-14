@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { APPROVAL_BATCH_MAX, decideApprovalBatch } from '../server/approvalActions'
+import { assertMovementTransition, nextStudentStatus } from '../server/movements'
 import { searchSms } from '../server/search'
 import type { SmsActor } from '../server/context'
 
@@ -29,6 +30,26 @@ describe('批量审批参数校验', () => {
     }))
     await expect(decideApprovalBatch(admin, { decision: 'approve', items }))
       .rejects.toMatchObject({ statusCode: 400 })
+  })
+})
+
+describe('学籍异动状态机', () => {
+  it('覆盖合法的状态流转', () => {
+    expect(assertMovementTransition('active', 'suspend')).toBe('suspended')
+    expect(assertMovementTransition('suspended', 'resume')).toBe('active')
+    expect(assertMovementTransition('active', 'transfer_out')).toBe('transferred')
+    expect(assertMovementTransition('suspended', 'transfer_out')).toBe('transferred')
+    expect(assertMovementTransition('transferred', 'transfer_in')).toBe('active')
+    expect(assertMovementTransition('active', 'graduate')).toBe('graduated')
+    expect(nextStudentStatus('transfer_in')).toBe('active')
+  })
+
+  it('拒绝非法的状态流转', () => {
+    expect(() => assertMovementTransition('suspended', 'suspend')).toThrow()
+    expect(() => assertMovementTransition('active', 'resume')).toThrow()
+    expect(() => assertMovementTransition('graduated', 'transfer_out')).toThrow()
+    expect(() => assertMovementTransition('active', 'transfer_in')).toThrow()
+    expect(() => assertMovementTransition('suspended', 'graduate')).toThrow()
   })
 })
 

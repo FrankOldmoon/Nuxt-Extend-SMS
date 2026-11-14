@@ -995,5 +995,35 @@ export const smsMigrations: ModuleMigration[] = [
           ON sms_assignment_submissions (organization_id, student_id);
       `)
     }
+  },
+  {
+    id: 'sms:021-student-movements',
+    checksum: '1',
+    async up(executor) {
+      const client = executor as SqlExecutor
+      await client.query(`
+        ALTER TABLE sms_students ADD COLUMN IF NOT EXISTS status varchar(20) NOT NULL DEFAULT 'active';
+        CREATE INDEX IF NOT EXISTS sms_students_org_status_idx
+          ON sms_students (organization_id, status);
+
+        CREATE TABLE IF NOT EXISTS sms_student_movements (
+          id               serial PRIMARY KEY,
+          organization_id  integer NOT NULL,
+          tenant_id        integer,
+          student_id       integer NOT NULL,
+          type             varchar(20) NOT NULL,
+          from_class_id    integer,
+          to_class_id      integer,
+          effective_date   date NOT NULL,
+          reason           varchar(500),
+          created_by       integer NOT NULL,
+          created_at       timestamptz NOT NULL DEFAULT now()
+        );
+        CREATE INDEX IF NOT EXISTS sms_student_movements_student_idx
+          ON sms_student_movements (organization_id, student_id, effective_date);
+        CREATE INDEX IF NOT EXISTS sms_student_movements_type_idx
+          ON sms_student_movements (organization_id, type, effective_date);
+      `)
+    }
   }
 ]

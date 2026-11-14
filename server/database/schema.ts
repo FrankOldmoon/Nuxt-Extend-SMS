@@ -136,6 +136,8 @@ export const smsStudents = pgTable(
     userId: integer('user_id'),
     name: varchar('name', { length: 120 }).notNull(),
     studentNo: varchar('student_no', { length: 40 }).notNull(),
+    /** active | suspended | transferred | graduated */
+    status: varchar('status', { length: 20 }).notNull().default('active'),
     deletedAt: timestamp('deleted_at', { withTimezone: true }),
     createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull()
   },
@@ -143,7 +145,33 @@ export const smsStudents = pgTable(
     organizationStudentNoIdx: uniqueIndex('sms_students_org_student_no_idx').on(table.organizationId, table.studentNo),
     organizationClassIdx: index('sms_students_org_class_idx').on(table.organizationId, table.classId),
     organizationUserIdx: uniqueIndex('sms_students_org_user_idx').on(table.organizationId, table.userId),
-    tenantIdx: index('sms_students_tenant_idx').on(table.tenantId)
+    tenantIdx: index('sms_students_tenant_idx').on(table.tenantId),
+    organizationStatusIdx: index('sms_students_org_status_idx').on(table.organizationId, table.status)
+  })
+)
+
+/** 学籍异动流水：每次状态变更都追加一行，不覆盖历史。 */
+export const smsStudentMovements = pgTable(
+  'sms_student_movements',
+  {
+    id: serial('id').primaryKey(),
+    organizationId: integer('organization_id').notNull(),
+    tenantId: integer('tenant_id'),
+    studentId: integer('student_id').notNull(),
+    /** transfer_in | transfer_out | suspend | resume | graduate */
+    type: varchar('type', { length: 20 }).notNull(),
+    fromClassId: integer('from_class_id'),
+    toClassId: integer('to_class_id'),
+    effectiveDate: date('effective_date').notNull(),
+    reason: varchar('reason', { length: 500 }),
+    createdBy: integer('created_by').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull()
+  },
+  table => ({
+    studentIdx: index('sms_student_movements_student_idx')
+      .on(table.organizationId, table.studentId, table.effectiveDate),
+    typeIdx: index('sms_student_movements_type_idx')
+      .on(table.organizationId, table.type, table.effectiveDate)
   })
 )
 

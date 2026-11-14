@@ -8,6 +8,8 @@ import { guardianStudentIds } from './guardians'
 export interface StudentSearchOptions {
   query?: string
   classId?: number
+  /** 精确过滤单个学生（用于异动页回填）。 */
+  studentId?: number
   limit?: number
   /** 游标分页：上一页最后一行的 id，返回更早的记录。 */
   cursor?: number
@@ -130,11 +132,15 @@ export async function searchStudents(actor: SmsActor, options: StudentSearchOpti
   if (options.classId !== undefined && Number.isSafeInteger(options.classId) && options.classId > 0) {
     conditions.push(eq(smsStudents.classId, options.classId))
   }
+  if (options.studentId !== undefined && Number.isSafeInteger(options.studentId) && options.studentId > 0) {
+    conditions.push(eq(smsStudents.id, options.studentId))
+  }
 
   return await db.select({
     id: smsStudents.id,
     name: smsStudents.name,
     studentNo: smsStudents.studentNo,
+    status: smsStudents.status,
     classId: smsStudents.classId,
     className: smsClasses.name,
     organizationId: smsStudents.organizationId
@@ -148,7 +154,7 @@ export async function searchStudents(actor: SmsActor, options: StudentSearchOpti
 }
 
 /** Row-level visibility for students (org + role scope). */
-async function studentScopeConditions(actor: SmsActor) {
+export async function studentScopeConditions(actor: SmsActor) {
   const organizationId = requireSmsOrganization(actor)
   const conditions = [eq(smsStudents.organizationId, organizationId), isNull(smsStudents.deletedAt)]
   if (!isSmsAdmin(actor)) {

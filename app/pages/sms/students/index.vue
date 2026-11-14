@@ -5,8 +5,16 @@ interface StudentRow {
   id: number
   name: string
   studentNo: string
+  status: string
   classId: number | null
   className: string | null
+}
+
+const STATUS_META: Record<string, { label: string, color: 'success' | 'warning' | 'error' | 'neutral' }> = {
+  active: { label: '在读', color: 'success' },
+  suspended: { label: '休学', color: 'warning' },
+  transferred: { label: '已转出', color: 'neutral' },
+  graduated: { label: '已毕业', color: 'neutral' }
 }
 
 interface ClassRow {
@@ -95,11 +103,12 @@ function exportCsv(): void {
     ? rows.value.filter(row => selectedIds.value.has(row.id))
     : rows.value
   if (exportRows.length === 0) return
-  const header = 'id,name,studentNo,className'
+  const header = 'id,name,studentNo,status,className'
   const body = exportRows.map(row => [
     String(row.id),
     row.name,
     row.studentNo,
+    row.status,
     row.className ?? ''
   ].map(csvCell).join(','))
   const blob = new Blob([`\uFEFF${[header, ...body].join('\n')}`], { type: 'text/csv;charset=utf-8' })
@@ -165,6 +174,14 @@ onBeforeUnmount(() => {
             to="/sms/students/import"
           >
             批量导入
+          </UButton>
+          <UButton
+            size="xs"
+            variant="soft"
+            icon="i-lucide-arrow-left-right"
+            to="/sms/students/movements"
+          >
+            学籍异动
           </UButton>
         </div>
       </header>
@@ -233,8 +250,11 @@ onBeforeUnmount(() => {
               <th class="px-3 py-2">
                 班级
               </th>
+              <th class="px-3 py-2">
+                状态
+              </th>
               <th class="px-3 py-2 text-right">
-                ID
+                操作
               </th>
             </tr>
           </thead>
@@ -262,8 +282,23 @@ onBeforeUnmount(() => {
               <td class="px-3 py-2 text-toned">
                 {{ row.className ?? '未分班' }}
               </td>
-              <td class="px-3 py-2 text-right text-xs text-muted">
-                {{ row.id }}
+              <td class="px-3 py-2">
+                <UBadge
+                  :color="STATUS_META[row.status]?.color ?? 'neutral'"
+                  variant="soft"
+                  size="sm"
+                >
+                  {{ STATUS_META[row.status]?.label ?? row.status }}
+                </UBadge>
+              </td>
+              <td class="px-3 py-2 text-right">
+                <UButton
+                  size="xs"
+                  variant="ghost"
+                  :to="`/sms/students/movements?studentId=${row.id}`"
+                >
+                  异动
+                </UButton>
               </td>
             </tr>
           </tbody>

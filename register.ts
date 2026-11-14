@@ -104,6 +104,7 @@ import { buildSmsMetrics, formatPrometheusMetrics, queryAuditLogs } from './serv
 import { listApprovalInbox, reassignApprovalTask } from './server/approvals'
 import { decideApprovalBatch } from './server/approvalActions'
 import { searchSms } from './server/search'
+import { createStudentMovement, listStudentMovements } from './server/movements'
 import {
   createAssignment,
   gradeSubmission,
@@ -678,9 +679,11 @@ const smsApis: ModuleApiDefinition<SmsActor>[] = [
       const limit = Number(args.limit)
       const cursor = Number(args.cursor)
       const classId = Number(args.classId)
+      const studentId = Number(args.studentId)
       return searchStudents(actor, {
         query,
         classId: Number.isSafeInteger(classId) && classId > 0 ? classId : undefined,
+        studentId: Number.isSafeInteger(studentId) && studentId > 0 ? studentId : undefined,
         limit: Number.isSafeInteger(limit) ? limit : undefined,
         cursor: Number.isSafeInteger(cursor) ? cursor : undefined
       })
@@ -694,6 +697,25 @@ const smsApis: ModuleApiDefinition<SmsActor>[] = [
     schema: isRecord,
     authorize: actor => canUseSms(actor, 'create'),
     handler: (_event, actor, input) => createStudent(actor, input as CreateStudentInput)
+  },
+  {
+    id: 'sms.students.movements.list',
+    moduleId: 'sms',
+    method: 'GET',
+    path: 'sms/students/movements',
+    schema: isRecord,
+    authorize: actor => canUseSms(actor, 'read', 'students'),
+    handler: (_event, actor, input) => listStudentMovements(actor, isRecord(input) ? input : {})
+  },
+  {
+    id: 'sms.students.movements.create',
+    moduleId: 'sms',
+    method: 'POST',
+    path: 'sms/students/movements',
+    schema: isRecord,
+    rateLimit: { max: 60, windowMs: 60_000 },
+    authorize: actor => canUseSms(actor, 'update', 'students'),
+    handler: (_event, actor, input) => createStudentMovement(actor, isRecord(input) ? input : {})
   },
   {
     id: 'sms.classes.list',
