@@ -56,7 +56,7 @@ describe('SMS role presets', () => {
   it('evaluates every role × capability pair', () => {
     // Guards the matrix itself: a new role or capability must be covered here.
     expect(SMS_ROLE_PRESETS).toHaveLength(16)
-    expect(smsCapabilities).toHaveLength(61)
+    expect(smsCapabilities).toHaveLength(76)
 
     let allowed = 0
     let denied = 0
@@ -66,7 +66,7 @@ describe('SMS role presets', () => {
         else denied += 1
       }
     }
-    expect(allowed + denied).toBe(16 * 61)
+    expect(allowed + denied).toBe(16 * 76)
     expect(allowed).toBeGreaterThan(0)
     expect(denied).toBeGreaterThan(0)
   })
@@ -83,11 +83,24 @@ describe('SMS role presets', () => {
     }
   })
 
-  it('gives students and guardians their own records, never writes beyond leave', () => {
+  it('gives students and guardians their own records, never school-wide writes', () => {
+    const writesFor = (code: string) => WRITES
+      .filter(capability => canRun(preset(code), capability))
+      .map(capability => capability.id)
+      .sort()
+
+    // Students may submit coursework and pick courses, but not touch scores.
+    expect(writesFor('sms.student')).toEqual([
+      'sms.assignments.submit',
+      'sms.elections.update',
+      'sms.leave.apply',
+      'sms.leave.cancel'
+    ])
+    // Guardians only act on leave for their children.
+    expect(writesFor('sms.guardian')).toEqual(['sms.leave.apply', 'sms.leave.cancel'])
+
     for (const code of ['sms.student', 'sms.guardian']) {
       const role = preset(code)
-      const writes = WRITES.filter(capability => canRun(role, capability)).map(capability => capability.id)
-      expect(writes.sort(), code).toEqual(['sms.leave.apply', 'sms.leave.cancel'])
       expect(canRun(role, smsCapabilities.find(item => item.id === 'sms.scores.save')!)).toBe(false)
       expect(canRun(role, smsCapabilities.find(item => item.id === 'sms.attendance.mark')!)).toBe(false)
     }

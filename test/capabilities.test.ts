@@ -18,6 +18,9 @@ describe('SMS capabilities', () => {
     expect(ids).toEqual([
       'sms.admission-cycles.create',
       'sms.admission-cycles.list',
+      'sms.agent-tasks.advance',
+      'sms.agent-tasks.create',
+      'sms.agent-tasks.list',
       'sms.applications.convert',
       'sms.applications.create',
       'sms.applications.list',
@@ -26,6 +29,10 @@ describe('SMS capabilities', () => {
       'sms.assets.create',
       'sms.assets.list',
       'sms.assets.transfer',
+      'sms.assignments.create',
+      'sms.assignments.grade',
+      'sms.assignments.list',
+      'sms.assignments.submit',
       'sms.attendance.alerts.ack',
       'sms.attendance.alerts.list',
       'sms.attendance.mark',
@@ -35,6 +42,8 @@ describe('SMS capabilities', () => {
       'sms.books.create',
       'sms.books.list',
       'sms.classes.list',
+      'sms.elections.list',
+      'sms.elections.update',
       'sms.enrollments.create',
       'sms.enrollments.list',
       'sms.enrollments.transfer',
@@ -47,6 +56,8 @@ describe('SMS capabilities', () => {
       'sms.guardians.list',
       'sms.invoices.create',
       'sms.invoices.list',
+      'sms.knowledge.create',
+      'sms.knowledge.search',
       'sms.leave.apply',
       'sms.leave.approve',
       'sms.leave.cancel',
@@ -54,12 +65,15 @@ describe('SMS capabilities', () => {
       'sms.leave.reject',
       'sms.loans.borrow',
       'sms.loans.return',
+      'sms.notifications.list',
+      'sms.notifications.send',
       'sms.payments.create',
       'sms.refunds.approve',
       'sms.refunds.list',
       'sms.refunds.request',
       'sms.report-cards.generate',
       'sms.reports.attendance',
+      'sms.reports.daily',
       'sms.reports.export',
       'sms.reports.finance',
       'sms.reports.scores',
@@ -70,6 +84,7 @@ describe('SMS capabilities', () => {
       'sms.students.create',
       'sms.students.delete',
       'sms.students.get',
+      'sms.students.import',
       'sms.students.search',
       'sms.students.update',
       'sms.teachers.assign',
@@ -82,7 +97,7 @@ describe('SMS capabilities', () => {
 
   it('requires a preview and a form for every write capability', () => {
     const writes = smsCapabilities.filter(capability => capability.operation === 'command')
-    expect(writes).toHaveLength(35)
+    expect(writes).toHaveLength(44)
     for (const capability of writes) {
       expect(capability.preview, capability.id).toBeTypeOf('function')
       expect(capability.riskLevel, capability.id).toMatch(/low|medium|high/)

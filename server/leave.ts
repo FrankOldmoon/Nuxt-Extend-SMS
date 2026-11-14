@@ -24,6 +24,14 @@ import {
 import { canUseSms, isSmsAdmin, requireSmsOrganization, type SmsActor } from './context'
 import { getStudent } from './students'
 import { guardianStudentIds } from './guardians'
+import { notifyLeaveDecided, notifyLeaveSubmitted } from './notifications'
+import {
+  cancelPendingApprovalTasks,
+  completeApprovalTask,
+  insertApprovalSteps,
+  loadNextPendingApprovalTask,
+  loadPendingApprovalTask
+} from './approvals'
 
 export const LEAVE_SUBJECT_TYPES = ['student', 'staff'] as const
 export type LeaveSubjectType = typeof LEAVE_SUBJECT_TYPES[number]
@@ -286,16 +294,22 @@ export async function applyLeave(actor: SmsActor, input: ApplyLeaveInput) {
     }).returning()
     if (!request) throw createError({ statusCode: 500, message: 'Failed to create leave request' })
 
-    const tasks = await tx.insert(smsApprovalTasks).values(route.map(step => ({
+    const tasks = await insertApprovalSteps(tx, {
       organizationId,
       tenantId: actor.tenantId ?? null,
       subjectType: 'leave',
       subjectId: request.id,
-      step: step.step,
-      assigneeUserId: step.assigneeUserId,
-      assigneeRole: step.assigneeRole,
-      status: 'pending'
-    }))).returning()
+      steps: route
+    })
+
+    await notifyLeaveSubmitted(tx, {
+      organizationId,
+      tenantId: actor.tenantId ?? null,
+      leaveId: request.id,
+      applicantUserId: actor.userId,
+      assigneeUserId: tasks.find(task => task.step === 1)?.assigneeUserId ?? null,
+      days: window.days
+    })
 
     await writeAudit(tx, {
       actorUserId: actor.userId,
@@ -351,14 +365,11 @@ export async function cancelLeave(actor: SmsActor, leaveId: number) {
       .returning()
     if (!updated) throw createError({ statusCode: 500, message: 'Failed to cancel leave' })
 
-    await tx.update(smsApprovalTasks)
-      .set({ status: 'cancelled', decidedBy: actor.userId, decidedAt: new Date() })
-      .where(and(
-        eq(smsApprovalTasks.organizationId, organizationId),
-        eq(smsApprovalTasks.subjectType, 'leave'),
-        eq(smsApprovalTasks.subjectId, leaveId),
-        eq(smsApprovalTasks.status, 'pending')
-      ))
+    await cancelPendingApprovalTasks(
+      tx,
+      { organizationId, subjectType: 'leave', subjectId: leaveId },
+      actor.userId
+    )
 
     let reverted = 0
     if (wasApproved && request.subjectType === 'student' && request.studentId) {
@@ -455,20 +466,11 @@ export async function decideLeave(actor: SmsActor, input: DecideLeaveInput) {
     throw createError({ statusCode: 409, message: `Leave is already ${request.status}` })
   }
 
-  const [task] = await db.select({
-    id: smsApprovalTasks.id,
-    step: smsApprovalTasks.step,
-    assigneeUserId: smsApprovalTasks.assigneeUserId,
-    assigneeRole: smsApprovalTasks.assigneeRole
-  }).from(smsApprovalTasks)
-    .where(and(
-      eq(smsApprovalTasks.organizationId, organizationId),
-      eq(smsApprovalTasks.subjectType, 'leave'),
-      eq(smsApprovalTasks.subjectId, leaveId),
-      eq(smsApprovalTasks.status, 'pending')
-    ))
-    .orderBy(asc(smsApprovalTasks.step))
-    .limit(1)
+  const task = await loadPendingApprovalTask(db, {
+    organizationId,
+    subjectType: 'leave',
+    subjectId: leaveId
+  })
   if (!task) throw createError({ statusCode: 409, message: 'No pending approval step for this leave' })
 
   let studentClassId: number | null = null
@@ -482,9 +484,12 @@ export async function decideLeave(actor: SmsActor, input: DecideLeaveInput) {
   await assertCanDecide(actor, task, studentClassId)
 
   return await db.transaction(async (tx) => {
-    await tx.update(smsApprovalTasks)
-      .set({ status: decision === 'approve' ? 'approved' : 'rejected', decidedBy: actor.userId, decidedAt: new Date(), comment })
-      .where(eq(smsApprovalTasks.id, task.id))
+    await completeApprovalTask(tx, {
+      taskId: task.id,
+      actorUserId: actor.userId,
+      decision: decision === 'approve' ? 'approved' : 'rejected',
+      comment
+    })
 
     if (decision === 'reject') {
       const [updated] = await tx.update(smsLeaveRequests)
@@ -497,14 +502,11 @@ export async function decideLeave(actor: SmsActor, input: DecideLeaveInput) {
         })
         .where(eq(smsLeaveRequests.id, leaveId))
         .returning()
-      await tx.update(smsApprovalTasks)
-        .set({ status: 'cancelled', decidedBy: actor.userId, decidedAt: new Date() })
-        .where(and(
-          eq(smsApprovalTasks.organizationId, organizationId),
-          eq(smsApprovalTasks.subjectType, 'leave'),
-          eq(smsApprovalTasks.subjectId, leaveId),
-          eq(smsApprovalTasks.status, 'pending')
-        ))
+      await cancelPendingApprovalTasks(
+        tx,
+        { organizationId, subjectType: 'leave', subjectId: leaveId },
+        actor.userId
+      )
       await writeAudit(tx, {
         actorUserId: actor.userId,
         tenantId: actor.tenantId ?? undefined,
@@ -517,18 +519,22 @@ export async function decideLeave(actor: SmsActor, input: DecideLeaveInput) {
         after: { status: 'rejected', step: task.step, comment },
         source: 'sms-service'
       })
+      await notifyLeaveDecided(tx, {
+        organizationId,
+        tenantId: actor.tenantId ?? null,
+        leaveId,
+        applicantUserId: request.applicantUserId,
+        status: 'rejected',
+        comment
+      })
       return { id: leaveId, status: updated?.status ?? 'rejected', step: task.step, escalated: false, attendance: 0 }
     }
 
-    const [next] = await tx.select({ step: smsApprovalTasks.step }).from(smsApprovalTasks)
-      .where(and(
-        eq(smsApprovalTasks.organizationId, organizationId),
-        eq(smsApprovalTasks.subjectType, 'leave'),
-        eq(smsApprovalTasks.subjectId, leaveId),
-        eq(smsApprovalTasks.status, 'pending')
-      ))
-      .orderBy(asc(smsApprovalTasks.step))
-      .limit(1)
+    const next = await loadNextPendingApprovalTask(tx, {
+      organizationId,
+      subjectType: 'leave',
+      subjectId: leaveId
+    })
     if (next) {
       await writeAudit(tx, {
         actorUserId: actor.userId,
@@ -541,6 +547,14 @@ export async function decideLeave(actor: SmsActor, input: DecideLeaveInput) {
         before: { status: 'pending', step: task.step },
         after: { status: 'pending', nextStep: next.step },
         source: 'sms-service'
+      })
+      await notifyLeaveSubmitted(tx, {
+        organizationId,
+        tenantId: actor.tenantId ?? null,
+        leaveId,
+        applicantUserId: request.applicantUserId,
+        assigneeUserId: next.assigneeUserId,
+        days: leaveDays(request.startAt, request.endAt)
       })
       return { id: leaveId, status: 'pending', step: task.step, escalated: true, attendance: 0 }
     }
@@ -577,6 +591,14 @@ export async function decideLeave(actor: SmsActor, input: DecideLeaveInput) {
       before: { status: request.status },
       after: { status: 'approved', step: task.step, attendance },
       source: 'sms-service'
+    })
+    await notifyLeaveDecided(tx, {
+      organizationId,
+      tenantId: actor.tenantId ?? null,
+      leaveId,
+      applicantUserId: request.applicantUserId,
+      status: 'approved',
+      comment
     })
 
     return { id: leaveId, status: updated?.status ?? 'approved', step: task.step, escalated: false, attendance }

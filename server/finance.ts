@@ -20,6 +20,8 @@ import { canUseSms, isSmsAdmin, requireSmsOrganization, type SmsActor } from './
 import { getStudent } from './students'
 import { guardianStudentIds } from './guardians'
 import { assertTermInContext } from './academics'
+import { notifyRefundDecided, notifyRefundRequested } from './notifications'
+import { completeApprovalTask, insertApprovalSteps, loadPendingApprovalTask } from './approvals'
 
 export const PAYMENT_METHODS = ['cash', 'transfer', 'wechat', 'alipay', 'other'] as const
 export type PaymentMethod = typeof PAYMENT_METHODS[number]
@@ -480,6 +482,20 @@ export async function requestRefund(actor: SmsActor, input: RequestRefundInput) 
       after: { paymentId, invoiceId: payment.invoiceId, amount },
       source: 'sms-service'
     })
+    await notifyRefundRequested(tx, {
+      organizationId,
+      tenantId: actor.tenantId ?? null,
+      refundId: row.id,
+      amount
+    })
+    // One unified approval step; the escalation job promotes it after the SLA.
+    await insertApprovalSteps(tx, {
+      organizationId,
+      tenantId: actor.tenantId ?? null,
+      subjectType: 'refund',
+      subjectId: row.id,
+      steps: [{ step: 1, assigneeRole: 'finance', assigneeUserId: null }]
+    })
     return { id: row.id, status: 'pending', paymentId, invoiceId: payment.invoiceId, amount }
   })
 }
@@ -507,8 +523,21 @@ export async function approveRefund(actor: SmsActor, input: ApproveRefundInput) 
   if (refund.requestedBy === actor.userId && !isSmsAdmin(actor)) {
     throw createError({ statusCode: 403, statusMessage: 'Forbidden', message: 'Refunds require a second approver' })
   }
+  const approvalTask = await loadPendingApprovalTask(db, {
+    organizationId,
+    subjectType: 'refund',
+    subjectId: refundId
+  })
 
   return await db.transaction(async (tx) => {
+    if (approvalTask) {
+      await completeApprovalTask(tx, {
+        taskId: approvalTask.id,
+        actorUserId: actor.userId,
+        decision: decision === 'approve' ? 'approved' : 'rejected',
+        comment: typeof input.comment === 'string' ? input.comment.slice(0, 500) : null
+      })
+    }
     const [updated] = await tx.update(smsRefunds)
       .set({
         status: decision === 'approve' ? 'approved' : 'rejected',
@@ -543,6 +572,13 @@ export async function approveRefund(actor: SmsActor, input: ApproveRefundInput) 
       before: { status: refund.status },
       after: { status: updated?.status ?? decision, invoicePaid },
       source: 'sms-service'
+    })
+    await notifyRefundDecided(tx, {
+      organizationId,
+      tenantId: actor.tenantId ?? null,
+      refundId,
+      requesterUserId: refund.requestedBy,
+      status: decision === 'approve' ? 'approved' : 'rejected'
     })
     return { id: refundId, status: updated?.status ?? decision, invoiceId: refund.invoiceId, invoicePaid }
   })

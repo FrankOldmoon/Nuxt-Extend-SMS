@@ -6,7 +6,8 @@ useHead({ meta: [{ name: 'robots', content: 'noindex, nofollow' }] })
 const navItems = [
   { label: 'Chat', to: '/sms/chat', icon: 'i-lucide-messages-square' },
   { label: 'Apps', to: '/sms/apps', icon: 'i-lucide-layout-grid' },
-  { label: 'Agents', to: '/sms/agents', icon: 'i-lucide-bot' }
+  { label: 'Agents', to: '/sms/agents', icon: 'i-lucide-bot' },
+  { label: 'Mobile', to: '/sms/mobile', icon: 'i-lucide-smartphone' }
 ]
 
 function isActive(to: string): boolean {

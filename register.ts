@@ -83,6 +83,27 @@ import {
   financeReport,
   scoreReport
 } from './server/reports'
+import {
+  canSendNotification,
+  listNotifications,
+  markAllNotificationsRead,
+  markNotificationRead,
+  sendNotification,
+  unreadNotificationCount
+} from './server/notifications'
+import { createKnowledgeArticle, searchKnowledge } from './server/knowledge'
+import { buildWorkbench } from './server/workbench'
+import { importStudentsCsv } from './server/imports'
+import { listDailyReport } from './server/reportDaily'
+import { advanceAgentTask, createAgentTask, listAgentTasks } from './server/agentTasks'
+import {
+  createAssignment,
+  gradeSubmission,
+  listAssignments,
+  listElections,
+  setCourseElection,
+  submitAssignment
+} from './server/teaching'
 import { classInContext, assertAcademicYearInContext, assertGradeInContext, assertSubjectInContext, assertTermInContext } from './server/academics'
 import { assertStudentInContext } from './server/enrollment'
 import { assertGuardianInContext, guardianStudentIds } from './server/guardians'
@@ -1034,6 +1055,167 @@ const smsApis: ModuleApiDefinition<SmsActor>[] = [
     schema: isRecord,
     authorize: actor => canExportReports(actor),
     handler: (_event, actor, input) => exportReport(actor, input as Record<string, unknown>)
+  },
+  {
+    id: 'sms.notifications.list',
+    moduleId: 'sms',
+    method: 'GET',
+    path: 'sms/notifications',
+    schema: isRecord,
+    authorize: actor => canUseSms(actor, 'read', 'notifications'),
+    handler: async (_event, actor, input) => ({
+      rows: await listNotifications(actor, isRecord(input) ? input : {}),
+      unread: await unreadNotificationCount(actor)
+    })
+  },
+  {
+    id: 'sms.notifications.send',
+    moduleId: 'sms',
+    method: 'POST',
+    path: 'sms/notifications',
+    schema: isRecord,
+    authorize: actor => canSendNotification(actor),
+    handler: (_event, actor, input) => sendNotification(actor, input as Record<string, unknown>)
+  },
+  {
+    id: 'sms.notifications.read',
+    moduleId: 'sms',
+    method: 'POST',
+    path: 'sms/notifications/read',
+    schema: isRecord,
+    authorize: actor => canUseSms(actor, 'read', 'notifications'),
+    handler: (_event, actor, input) => {
+      const notificationId = isRecord(input) ? Number(input.notificationId) : 0
+      return Number.isSafeInteger(notificationId) && notificationId > 0
+        ? markNotificationRead(actor, notificationId)
+        : markAllNotificationsRead(actor)
+    }
+  },
+  {
+    id: 'sms.knowledge.search',
+    moduleId: 'sms',
+    method: 'GET',
+    path: 'sms/knowledge',
+    schema: isRecord,
+    authorize: actor => canUseSms(actor, 'read', 'knowledge'),
+    handler: (_event, actor, input) => searchKnowledge(actor, isRecord(input) ? input : {})
+  },
+  {
+    id: 'sms.knowledge.create',
+    moduleId: 'sms',
+    method: 'POST',
+    path: 'sms/knowledge',
+    schema: isRecord,
+    authorize: actor => actor.roleName === 'admin' || actor.permissions?.includes('sms.knowledge.create') === true,
+    handler: (_event, actor, input) => createKnowledgeArticle(actor, input as Record<string, unknown>)
+  },
+  {
+    id: 'sms.workbench.summary',
+    moduleId: 'sms',
+    method: 'GET',
+    path: 'sms/workbench',
+    schema: isRecord,
+    authorize: actor => Boolean(actor.organizationId),
+    handler: (_event, actor) => buildWorkbench(actor)
+  },
+  {
+    id: 'sms.students.import',
+    moduleId: 'sms',
+    method: 'POST',
+    path: 'sms/students/import',
+    schema: isRecord,
+    authorize: actor => canUseSms(actor, 'create', 'students'),
+    handler: (_event, actor, input) => importStudentsCsv(actor, isRecord(input) ? input : {})
+  },
+  {
+    id: 'sms.reports.daily',
+    moduleId: 'sms',
+    method: 'GET',
+    path: 'sms/reports/daily',
+    schema: isRecord,
+    authorize: actor => canUseSms(actor, 'read', 'reports'),
+    handler: (_event, actor, input) => listDailyReport(actor, isRecord(input) ? input : {})
+  },
+  {
+    id: 'sms.agent-tasks.list',
+    moduleId: 'sms',
+    method: 'GET',
+    path: 'sms/agent-tasks',
+    schema: isRecord,
+    authorize: actor => canUseSms(actor, 'read', 'agent-tasks'),
+    handler: (_event, actor, input) => listAgentTasks(actor, isRecord(input) ? input : {})
+  },
+  {
+    id: 'sms.agent-tasks.create',
+    moduleId: 'sms',
+    method: 'POST',
+    path: 'sms/agent-tasks',
+    schema: isRecord,
+    authorize: actor => actor.roleName === 'admin' || actor.permissions?.includes('sms.agent-tasks.create') === true,
+    handler: (_event, actor, input) => createAgentTask(actor, input as Record<string, unknown>)
+  },
+  {
+    id: 'sms.agent-tasks.advance',
+    moduleId: 'sms',
+    method: 'POST',
+    path: 'sms/agent-tasks/advance',
+    schema: isRecord,
+    authorize: actor => canUseSms(actor, 'read', 'agent-tasks'),
+    handler: (_event, actor, input) => advanceAgentTask(actor, input as Record<string, unknown>)
+  },
+  {
+    id: 'sms.assignments.list',
+    moduleId: 'sms',
+    method: 'GET',
+    path: 'sms/assignments',
+    schema: isRecord,
+    authorize: actor => canUseSms(actor, 'read', 'assignments'),
+    handler: (_event, actor, input) => listAssignments(actor, isRecord(input) ? input : {})
+  },
+  {
+    id: 'sms.assignments.create',
+    moduleId: 'sms',
+    method: 'POST',
+    path: 'sms/assignments',
+    schema: isRecord,
+    authorize: actor => canUseSms(actor, 'update', 'assignments'),
+    handler: (_event, actor, input) => createAssignment(actor, input as Record<string, unknown>)
+  },
+  {
+    id: 'sms.assignments.submit',
+    moduleId: 'sms',
+    method: 'POST',
+    path: 'sms/assignments/submit',
+    schema: isRecord,
+    authorize: actor => canUseSms(actor, 'create', 'assignments'),
+    handler: (_event, actor, input) => submitAssignment(actor, input as Record<string, unknown>)
+  },
+  {
+    id: 'sms.assignments.grade',
+    moduleId: 'sms',
+    method: 'POST',
+    path: 'sms/assignments/grade',
+    schema: isRecord,
+    authorize: actor => canUseSms(actor, 'update', 'assignments'),
+    handler: (_event, actor, input) => gradeSubmission(actor, input as Record<string, unknown>)
+  },
+  {
+    id: 'sms.elections.list',
+    moduleId: 'sms',
+    method: 'GET',
+    path: 'sms/elections',
+    schema: isRecord,
+    authorize: actor => canUseSms(actor, 'read', 'elections'),
+    handler: (_event, actor, input) => listElections(actor, isRecord(input) ? input : {})
+  },
+  {
+    id: 'sms.elections.update',
+    moduleId: 'sms',
+    method: 'POST',
+    path: 'sms/elections',
+    schema: isRecord,
+    authorize: actor => canUseSms(actor, 'create', 'elections'),
+    handler: (_event, actor, input) => setCourseElection(actor, input as Record<string, unknown>)
   }
 ]
 

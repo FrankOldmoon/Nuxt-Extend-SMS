@@ -19,6 +19,7 @@ import {
   smsTeacherAssignments
 } from './database/schema'
 import { canUseSms, isSmsAdmin, requireSmsOrganization, type SmsActor } from './context'
+import { notifyAttendanceAlerts } from './notifications'
 
 export const ATTENDANCE_STATUSES = ['present', 'late', 'absent', 'excused', 'leave'] as const
 export type AttendanceStatus = typeof ATTENDANCE_STATUSES[number]
@@ -306,7 +307,7 @@ async function refreshAlerts(
   organizationId: number,
   tenantId: number | null,
   studentId: number
-): Promise<void> {
+): Promise<number> {
   const since = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10)
   const rows = await tx.select({
     date: smsAttendanceRecords.attendanceDate,
@@ -324,8 +325,9 @@ async function refreshAlerts(
     date: row.date,
     status: normalizeAttendanceStatus(row.status)
   }))
+  let created = 0
   for (const alert of evaluateAttendanceAlerts(days)) {
-    await tx.insert(smsAttendanceAlerts).values({
+    const inserted = await tx.insert(smsAttendanceAlerts).values({
       organizationId,
       tenantId,
       studentId,
@@ -334,8 +336,10 @@ async function refreshAlerts(
       windowEnd: alert.windowEnd,
       metric: alert.metric.toFixed(2),
       threshold: alert.threshold.toFixed(2)
-    }).onConflictDoNothing()
+    }).onConflictDoNothing().returning({ id: smsAttendanceAlerts.id })
+    created += inserted.length
   }
+  return created
 }
 
 // ---------------------------------------------------------------------------
@@ -516,7 +520,17 @@ export async function markAttendance(actor: SmsActor, input: MarkAttendanceInput
       remark,
       actorUserId: actor.userId
     })
-    await refreshAlerts(tx, organizationId, actor.tenantId ?? null, studentId)
+    const createdAlerts = await refreshAlerts(tx, organizationId, actor.tenantId ?? null, studentId)
+    if (createdAlerts > 0) {
+      await notifyAttendanceAlerts(tx, {
+        organizationId,
+        tenantId: actor.tenantId ?? null,
+        studentId,
+        classId,
+        studentName: student.name,
+        alertCount: createdAlerts
+      })
+    }
     await writeAudit(tx, {
       actorUserId: actor.userId,
       tenantId: actor.tenantId ?? undefined,
@@ -595,6 +609,14 @@ export async function batchMarkAttendance(actor: SmsActor, input: BatchMarkInput
   for (const entry of entries) {
     await assertStudentInClass(organizationId, entry.studentId, classId)
   }
+  const studentIds = [...new Set(entries.map(entry => entry.studentId))]
+  const nameRows = await db.select({ id: smsStudents.id, name: smsStudents.name })
+    .from(smsStudents)
+    .where(and(
+      eq(smsStudents.organizationId, organizationId),
+      inArray(smsStudents.id, studentIds)
+    ))
+  const studentNames = new Map(nameRows.map(row => [row.id, row.name]))
 
   return await db.transaction(async (tx) => {
     const results: Array<{ studentId: number, recordId: number, status: string }> = []
@@ -615,8 +637,18 @@ export async function batchMarkAttendance(actor: SmsActor, input: BatchMarkInput
       if (before) corrected += 1
       results.push({ studentId: entry.studentId, recordId: row.id, status: row.status })
     }
-    for (const studentId of new Set(entries.map(entry => entry.studentId))) {
-      await refreshAlerts(tx, organizationId, actor.tenantId ?? null, studentId)
+    for (const studentId of studentIds) {
+      const createdAlerts = await refreshAlerts(tx, organizationId, actor.tenantId ?? null, studentId)
+      if (createdAlerts > 0) {
+        await notifyAttendanceAlerts(tx, {
+          organizationId,
+          tenantId: actor.tenantId ?? null,
+          studentId,
+          classId,
+          studentName: studentNames.get(studentId) ?? null,
+          alertCount: createdAlerts
+        })
+      }
     }
     await writeAudit(tx, {
       actorUserId: actor.userId,

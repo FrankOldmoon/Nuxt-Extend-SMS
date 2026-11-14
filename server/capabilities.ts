@@ -7,7 +7,7 @@
  */
 import { createError } from 'h3'
 import type { CapabilityDefinition, PreviewResult } from '../../../server/sdk'
-import { canUseSms, type SmsActor } from './context'
+import { canUseSms, isSmsAdmin, type SmsActor } from './context'
 import {
   assertClassInContext,
   createStudent,
@@ -131,6 +131,29 @@ import {
   normalizeReportType,
   scoreReport
 } from './reports'
+import {
+  canSendNotification,
+  listNotifications,
+  sendNotification,
+  unreadNotificationCount
+} from './notifications'
+import { createKnowledgeArticle, searchKnowledge } from './knowledge'
+import { IMPORT_MAX_ROWS, importStudentsCsv, parseCsv } from './imports'
+import { listDailyReport } from './reportDaily'
+import {
+  AGENT_TASK_EVENTS,
+  advanceAgentTask,
+  createAgentTask,
+  listAgentTasks
+} from './agentTasks'
+import {
+  createAssignment,
+  gradeSubmission,
+  listAssignments,
+  listElections,
+  setCourseElection,
+  submitAssignment
+} from './teaching'
 
 type Args = Record<string, unknown>
 type Capability = CapabilityDefinition<SmsActor, unknown>
@@ -3609,6 +3632,666 @@ const reportsExport: Capability = {
   }
 }
 
+const notificationsList: Capability = {
+  id: 'sms.notifications.list',
+  title: '我的通知',
+  description: '查看当前用户收到的站内通知与未读数量（按组织隔离）',
+  resource: 'notifications',
+  moduleId: 'sms',
+  operation: 'query',
+  riskLevel: 'low',
+  permission: 'sms.notifications.read',
+  approval: 'none',
+  timeoutMs: TIMEOUT_MS,
+  rateLimit: { max: 60, windowMs: 60_000 },
+  schema: isRecord,
+  inputJsonSchema: {
+    type: 'object',
+    properties: {
+      status: { type: 'string', enum: ['unread', 'read', 'all'] },
+      category: { type: 'string', enum: ['attendance', 'leave', 'finance', 'approval', 'academic', 'system'] },
+      limit: { type: 'integer', minimum: 1, maximum: 200 }
+    },
+    additionalProperties: false
+  },
+  authorize: actor => read(actor, 'notifications'),
+  execute: async (input, actor) => {
+    const rows = await listNotifications(actor, isRecord(input) ? input : {})
+    return { rows, unread: await unreadNotificationCount(actor) }
+  },
+  summarize: (value) => {
+    const rows = isRecord(value) && Array.isArray(value.rows) ? value.rows : []
+    const unread = isRecord(value) ? Number(value.unread ?? 0) : 0
+    return rows.length === 0 ? '没有通知' : `共 ${rows.length} 条通知，其中 ${unread} 条未读`
+  },
+  resultView: {
+    kind: 'table',
+    columns: [
+      { key: 'title', label: '标题' },
+      { key: 'category', label: '类别' },
+      { key: 'status', label: '状态' },
+      { key: 'createdAt', label: '时间', format: 'datetime' },
+      { key: 'link', label: '链接' }
+    ]
+  }
+}
+
+const notificationsSend: Capability = {
+  id: 'sms.notifications.send',
+  title: '发送通知',
+  description: '向本组织成员发送站内通知，可按角色或指定用户定向发送',
+  resource: 'notifications',
+  moduleId: 'sms',
+  operation: 'command',
+  riskLevel: 'medium',
+  permission: 'sms.notifications.send',
+  approval: 'confirm',
+  timeoutMs: TIMEOUT_MS,
+  rateLimit: { max: 20, windowMs: 60_000 },
+  schema: isRecord,
+  inputJsonSchema: {
+    type: 'object',
+    properties: {
+      title: { type: 'string' },
+      body: { type: 'string' },
+      category: { type: 'string', enum: ['attendance', 'leave', 'finance', 'approval', 'academic', 'system'] },
+      roleNames: { type: 'array', items: { type: 'string' }, description: '目标角色名称，例如 sms.teacher' },
+      recipientUserIds: { type: 'array', items: { type: 'integer', minimum: 1 } },
+      link: { type: 'string', description: '站内路径，例如 /sms' }
+    },
+    required: ['title'],
+    additionalProperties: false
+  },
+  form: {
+    fields: [
+      { key: 'title', label: '标题', type: 'text', required: true },
+      { key: 'body', label: '内容', type: 'textarea' },
+      { key: 'category', label: '类别', type: 'select', required: true },
+      { key: 'roleNames', label: '目标角色', type: 'text', help: '多个角色用逗号分隔' },
+      { key: 'link', label: '站内链接', type: 'text', placeholder: '/sms' }
+    ],
+    submitLabel: '发送通知',
+    layout: 'single-column'
+  },
+  authorize: actor => canSendNotification(actor),
+  preview: (input): PreviewResult => {
+    const args = isRecord(input) ? input : {}
+    const roles = Array.isArray(args.roleNames) ? args.roleNames.length : 0
+    const users = Array.isArray(args.recipientUserIds) ? args.recipientUserIds.length : 0
+    const targets = roles + users
+    return {
+      summary: targets > 0
+        ? `将向 ${targets} 个目标发送通知「${String(args.title ?? '')}」。`
+        : '尚未指定收件人，请选择目标角色或用户。',
+      details: { title: args.title, category: args.category, roles, users },
+      impact: Math.max(targets, 1),
+      warnings: targets === 0 ? ['没有收件人时发送会被拒绝。'] : undefined
+    }
+  },
+  execute: (input, actor) => sendNotification(actor, isRecord(input) ? input : {}),
+  summarize: (value) => {
+    const row = isRecord(value) ? value : {}
+    return `已发送通知给 ${row.sent ?? 0} 人`
+  }
+}
+
+const knowledgeSearch: Capability = {
+  id: 'sms.knowledge.search',
+  title: '检索校规知识库',
+  description: '按关键词检索校规、请假制度、收费说明等知识条目（按角色可见范围过滤）',
+  resource: 'knowledge',
+  moduleId: 'sms',
+  operation: 'query',
+  riskLevel: 'low',
+  permission: 'sms.knowledge.read',
+  approval: 'none',
+  timeoutMs: TIMEOUT_MS,
+  rateLimit: { max: 60, windowMs: 60_000 },
+  schema: isRecord,
+  inputJsonSchema: {
+    type: 'object',
+    properties: {
+      query: { type: 'string' },
+      tags: { type: 'string' },
+      limit: { type: 'integer', minimum: 1, maximum: 50 }
+    },
+    additionalProperties: false
+  },
+  authorize: actor => read(actor, 'knowledge'),
+  execute: (input, actor) => searchKnowledge(actor, isRecord(input) ? input : {}),
+  summarize: rows => listSummary('知识条目', rows),
+  resultView: {
+    kind: 'table',
+    columns: [
+      { key: 'title', label: '标题' },
+      { key: 'snippet', label: '摘要' },
+      { key: 'tags', label: '标签' },
+      { key: 'audience', label: '可见范围' },
+      { key: 'updatedAt', label: '更新时间', format: 'datetime' }
+    ]
+  }
+}
+
+const knowledgeCreate: Capability = {
+  id: 'sms.knowledge.create',
+  title: '新增知识条目',
+  description: '向校规知识库新增一条可检索的制度说明',
+  resource: 'knowledge',
+  moduleId: 'sms',
+  operation: 'command',
+  riskLevel: 'medium',
+  permission: 'sms.knowledge.create',
+  approval: 'confirm',
+  timeoutMs: TIMEOUT_MS,
+  rateLimit: { max: 20, windowMs: 60_000 },
+  schema: isRecord,
+  inputJsonSchema: {
+    type: 'object',
+    properties: {
+      title: { type: 'string' },
+      content: { type: 'string' },
+      tags: { type: 'string' },
+      audience: { type: 'string', enum: ['all', 'staff', 'student', 'guardian'] },
+      status: { type: 'string', enum: ['published', 'draft'] }
+    },
+    required: ['title', 'content'],
+    additionalProperties: false
+  },
+  form: {
+    fields: [
+      { key: 'title', label: '标题', type: 'text', required: true },
+      { key: 'content', label: '正文', type: 'textarea', required: true },
+      { key: 'tags', label: '标签', type: 'text', help: '用逗号分隔' },
+      { key: 'audience', label: '可见范围', type: 'select', required: true },
+      { key: 'status', label: '状态', type: 'select', required: true }
+    ],
+    submitLabel: '保存条目',
+    layout: 'single-column'
+  },
+  authorize: actor => isSmsAdmin(actor) || (actor.permissions ?? []).includes('sms.knowledge.create'),
+  preview: (input): PreviewResult => {
+    const args = isRecord(input) ? input : {}
+    return {
+      summary: `将新增知识条目「${String(args.title ?? '')}」。`,
+      details: { title: args.title, audience: args.audience, status: args.status },
+      impact: 1,
+      warnings: args.status === 'draft' ? ['草稿不会出现在检索结果中。'] : undefined
+    }
+  },
+  execute: (input, actor) => createKnowledgeArticle(actor, isRecord(input) ? input : {}),
+  summarize: (value) => {
+    const row = isRecord(value) ? value : {}
+    return `知识条目已保存：#${row.id ?? '-'}`
+  }
+}
+
+const studentsImport: Capability = {
+  id: 'sms.students.import',
+  title: '批量导入学生',
+  description: '通过 CSV 批量导入学生档案，逐行校验并返回导入报告（高风险，需确认）',
+  resource: 'students',
+  moduleId: 'sms',
+  operation: 'command',
+  riskLevel: 'high',
+  permission: 'sms.students.create',
+  approval: 'confirm',
+  requiresApproval: true,
+  timeoutMs: 60_000,
+  rateLimit: { max: 5, windowMs: 60_000 },
+  schema: isRecord,
+  inputJsonSchema: {
+    type: 'object',
+    properties: {
+      csv: { type: 'string', description: '表头需包含 name, studentNo, classId' },
+      dryRun: { type: 'boolean', description: '只校验不写入' }
+    },
+    required: ['csv'],
+    additionalProperties: false
+  },
+  form: {
+    fields: [
+      {
+        key: 'csv',
+        label: 'CSV 内容',
+        type: 'textarea',
+        required: true,
+        help: `表头：name,studentNo,classId；单次最多 ${IMPORT_MAX_ROWS} 行`
+      },
+      { key: 'dryRun', label: '仅校验', type: 'boolean', help: '开启后不会写入数据库' }
+    ],
+    submitLabel: '开始导入',
+    layout: 'single-column'
+  },
+  authorize: actor => write(actor, 'create', 'students'),
+  preview: (input): PreviewResult => {
+    const args = isRecord(input) ? input : {}
+    const csv = typeof args.csv === 'string' ? args.csv : ''
+    const dataRows = Math.max(parseCsv(csv).length - 1, 0)
+    return {
+      summary: args.dryRun === true
+        ? `将校验 ${dataRows} 行学生数据（不写入）。`
+        : `将导入最多 ${dataRows} 行学生数据。`,
+      details: { rows: dataRows, dryRun: args.dryRun === true },
+      impact: dataRows,
+      warnings: dataRows > IMPORT_MAX_ROWS ? [`超过单次上限 ${IMPORT_MAX_ROWS} 行，将被拒绝。`] : undefined
+    }
+  },
+  execute: (input, actor) => importStudentsCsv(actor, isRecord(input) ? input : {}),
+  summarize: (value) => {
+    const row = isRecord(value) ? value : {}
+    return `导入完成：成功 ${row.imported ?? 0} 行，失败 ${row.invalid ?? 0} 行`
+  }
+}
+
+const reportsDaily: Capability = {
+  id: 'sms.reports.daily',
+  title: '日报汇总',
+  description: '查询预聚合的按班级每日考勤汇总（避免扫描原始考勤表）',
+  resource: 'reports',
+  moduleId: 'sms',
+  operation: 'query',
+  riskLevel: 'low',
+  permission: 'sms.reports.read',
+  approval: 'none',
+  timeoutMs: TIMEOUT_MS,
+  rateLimit: { max: 60, windowMs: 60_000 },
+  schema: isRecord,
+  inputJsonSchema: {
+    type: 'object',
+    properties: {
+      from: { type: 'string', description: 'YYYY-MM-DD' },
+      to: { type: 'string', description: 'YYYY-MM-DD' },
+      classId: { type: 'integer', minimum: 0 },
+      limit: { type: 'integer', minimum: 1, maximum: 500 }
+    },
+    additionalProperties: false
+  },
+  authorize: actor => read(actor, 'reports'),
+  execute: (input, actor) => listDailyReport(actor, isRecord(input) ? input : {}),
+  summarize: rows => listSummary('日报', rows),
+  resultView: {
+    kind: 'table',
+    columns: [
+      { key: 'reportDate', label: '日期', format: 'datetime' },
+      { key: 'classId', label: '班级 ID', format: 'number' },
+      { key: 'present', label: '出勤', format: 'number' },
+      { key: 'late', label: '迟到', format: 'number' },
+      { key: 'absent', label: '缺勤', format: 'number' },
+      { key: 'leave', label: '请假', format: 'number' },
+      { key: 'total', label: '合计', format: 'number' }
+    ]
+  }
+}
+
+const agentTasksList: Capability = {
+  id: 'sms.agent-tasks.list',
+  title: '我的 Agent 任务',
+  description: '列出当前用户创建的任务型 Agent 运行记录及状态',
+  resource: 'agent-tasks',
+  moduleId: 'sms',
+  operation: 'query',
+  riskLevel: 'low',
+  permission: 'sms.agent-tasks.read',
+  approval: 'none',
+  timeoutMs: TIMEOUT_MS,
+  rateLimit: { max: 60, windowMs: 60_000 },
+  schema: isRecord,
+  inputJsonSchema: {
+    type: 'object',
+    properties: {
+      status: { type: 'string', enum: ['all', 'pending', 'running', 'waiting_approval', 'done', 'failed', 'cancelled'] },
+      limit: { type: 'integer', minimum: 1, maximum: 100 }
+    },
+    additionalProperties: false
+  },
+  authorize: actor => read(actor, 'agent-tasks'),
+  execute: (input, actor) => listAgentTasks(actor, isRecord(input) ? input : {}),
+  summarize: rows => listSummary('Agent 任务', rows),
+  resultView: {
+    kind: 'table',
+    columns: [
+      { key: 'title', label: '任务' },
+      { key: 'status', label: '状态' },
+      { key: 'step', label: '步骤', format: 'number' },
+      { key: 'maxSteps', label: '上限', format: 'number' },
+      { key: 'updatedAt', label: '更新时间', format: 'datetime' }
+    ]
+  }
+}
+
+const agentTasksCreate: Capability = {
+  id: 'sms.agent-tasks.create',
+  title: '创建 Agent 任务',
+  description: '为一个多步骤目标创建可恢复的任务型 Agent 运行',
+  resource: 'agent-tasks',
+  moduleId: 'sms',
+  operation: 'command',
+  riskLevel: 'medium',
+  permission: 'sms.agent-tasks.create',
+  approval: 'confirm',
+  timeoutMs: TIMEOUT_MS,
+  rateLimit: { max: 20, windowMs: 60_000 },
+  schema: isRecord,
+  inputJsonSchema: {
+    type: 'object',
+    properties: {
+      title: { type: 'string' },
+      goal: { type: 'string' },
+      payload: { type: 'object' }
+    },
+    required: ['title'],
+    additionalProperties: false
+  },
+  form: {
+    fields: [
+      { key: 'title', label: '任务名称', type: 'text', required: true },
+      { key: 'goal', label: '目标', type: 'textarea' }
+    ],
+    submitLabel: '创建任务',
+    layout: 'single-column'
+  },
+  authorize: actor => isSmsAdmin(actor) || (actor.permissions ?? []).includes('sms.agent-tasks.create'),
+  preview: (input): PreviewResult => {
+    const args = isRecord(input) ? input : {}
+    return {
+      summary: `将创建 Agent 任务「${String(args.title ?? '')}」。`,
+      details: { title: args.title, goal: args.goal },
+      impact: 1
+    }
+  },
+  execute: (input, actor) => createAgentTask(actor, isRecord(input) ? input : {}),
+  summarize: (value) => {
+    const row = isRecord(value) ? value : {}
+    return `Agent 任务已创建：#${row.id ?? '-'}`
+  }
+}
+
+const agentTasksAdvance: Capability = {
+  id: 'sms.agent-tasks.advance',
+  title: '推进 Agent 任务',
+  description: '按状态机推进任务（开始/等待审批/恢复/完成/失败/取消）',
+  resource: 'agent-tasks',
+  moduleId: 'sms',
+  operation: 'command',
+  riskLevel: 'low',
+  permission: 'sms.agent-tasks.read',
+  approval: 'confirm',
+  timeoutMs: TIMEOUT_MS,
+  rateLimit: { max: 60, windowMs: 60_000 },
+  schema: isRecord,
+  inputJsonSchema: {
+    type: 'object',
+    properties: {
+      taskId: { type: 'integer', minimum: 1 },
+      event: { type: 'string', enum: [...AGENT_TASK_EVENTS] },
+      note: { type: 'string' }
+    },
+    required: ['taskId', 'event'],
+    additionalProperties: false
+  },
+  authorize: actor => read(actor, 'agent-tasks'),
+  preview: (input): PreviewResult => {
+    const args = isRecord(input) ? input : {}
+    return {
+      summary: `将把 Agent 任务 #${String(args.taskId ?? '')} 推进为「${String(args.event ?? '')}」。`,
+      details: { taskId: args.taskId, event: args.event },
+      impact: 1
+    }
+  },
+  execute: (input, actor) => advanceAgentTask(actor, isRecord(input) ? input : {}),
+  summarize: (value) => {
+    const row = isRecord(value) ? value : {}
+    return `Agent 任务状态：${row.status ?? '-'}`
+  }
+}
+
+const assignmentsCreate: Capability = {
+  id: 'sms.assignments.create',
+  title: '布置作业',
+  description: '为班级和科目创建作业（草稿或直接发布）',
+  resource: 'assignments',
+  moduleId: 'sms',
+  operation: 'command',
+  riskLevel: 'medium',
+  permission: 'sms.assignments.update',
+  approval: 'confirm',
+  timeoutMs: TIMEOUT_MS,
+  rateLimit: { max: 30, windowMs: 60_000 },
+  schema: isRecord,
+  inputJsonSchema: {
+    type: 'object',
+    properties: {
+      classId: { type: 'integer', minimum: 1 },
+      subjectId: { type: 'integer', minimum: 1 },
+      title: { type: 'string' },
+      description: { type: 'string' },
+      dueAt: { type: 'string' },
+      status: { type: 'string', enum: ['draft', 'published', 'closed'] }
+    },
+    required: ['classId', 'subjectId', 'title'],
+    additionalProperties: false
+  },
+  form: {
+    fields: [
+      { key: 'classId', label: '班级 ID', type: 'number', required: true },
+      { key: 'subjectId', label: '科目 ID', type: 'number', required: true },
+      { key: 'title', label: '标题', type: 'text', required: true },
+      { key: 'description', label: '说明', type: 'textarea' },
+      { key: 'dueAt', label: '截止时间', type: 'text', help: 'ISO 时间' },
+      { key: 'status', label: '状态', type: 'select', required: true }
+    ],
+    submitLabel: '保存作业',
+    layout: 'single-column'
+  },
+  authorize: actor => write(actor, 'update', 'assignments'),
+  preview: (input): PreviewResult => {
+    const args = isRecord(input) ? input : {}
+    return {
+      summary: `将在班级 ${String(args.classId ?? '')} 布置作业「${String(args.title ?? '')}」。`,
+      details: { classId: args.classId, subjectId: args.subjectId, status: args.status },
+      impact: 1
+    }
+  },
+  execute: (input, actor) => createAssignment(actor, isRecord(input) ? input : {}),
+  summarize: (value) => {
+    const row = isRecord(value) ? value : {}
+    return `作业已保存：#${row.id ?? '-'}`
+  }
+}
+
+const assignmentsList: Capability = {
+  id: 'sms.assignments.list',
+  title: '查询作业',
+  description: '按班级与状态查询作业（学生仅能看到已发布作业）',
+  resource: 'assignments',
+  moduleId: 'sms',
+  operation: 'query',
+  riskLevel: 'low',
+  permission: 'sms.assignments.read',
+  approval: 'none',
+  timeoutMs: TIMEOUT_MS,
+  rateLimit: { max: 60, windowMs: 60_000 },
+  schema: isRecord,
+  inputJsonSchema: {
+    type: 'object',
+    properties: {
+      classId: { type: 'integer', minimum: 1 },
+      status: { type: 'string', enum: ['draft', 'published', 'closed'] },
+      limit: { type: 'integer', minimum: 1, maximum: 200 }
+    },
+    additionalProperties: false
+  },
+  authorize: actor => read(actor, 'assignments'),
+  execute: (input, actor) => listAssignments(actor, isRecord(input) ? input : {}),
+  summarize: rows => listSummary('作业', rows),
+  resultView: {
+    kind: 'table',
+    columns: [
+      { key: 'title', label: '作业' },
+      { key: 'classId', label: '班级 ID', format: 'number' },
+      { key: 'subjectId', label: '科目 ID', format: 'number' },
+      { key: 'status', label: '状态' },
+      { key: 'dueAt', label: '截止', format: 'datetime' }
+    ]
+  }
+}
+
+const assignmentsSubmit: Capability = {
+  id: 'sms.assignments.submit',
+  title: '提交作业',
+  description: '学生提交或更新自己的作业内容',
+  resource: 'assignments',
+  moduleId: 'sms',
+  operation: 'command',
+  riskLevel: 'low',
+  permission: 'sms.assignments.submit',
+  approval: 'confirm',
+  timeoutMs: TIMEOUT_MS,
+  rateLimit: { max: 30, windowMs: 60_000 },
+  schema: isRecord,
+  inputJsonSchema: {
+    type: 'object',
+    properties: {
+      assignmentId: { type: 'integer', minimum: 1 },
+      content: { type: 'string' }
+    },
+    required: ['assignmentId'],
+    additionalProperties: false
+  },
+  authorize: actor => canUseSms(actor, 'create', 'assignments'),
+  preview: (input): PreviewResult => {
+    const args = isRecord(input) ? input : {}
+    return {
+      summary: `将提交作业 #${String(args.assignmentId ?? '')}。`,
+      details: { assignmentId: args.assignmentId, length: String(args.content ?? '').length },
+      impact: 1
+    }
+  },
+  execute: (input, actor) => submitAssignment(actor, isRecord(input) ? input : {}),
+  summarize: (value) => {
+    const row = isRecord(value) ? value : {}
+    return `作业已提交：#${row.id ?? '-'}`
+  }
+}
+
+const assignmentsGrade: Capability = {
+  id: 'sms.assignments.grade',
+  title: '批改作业',
+  description: '为作业提交打分并填写评语（限所授班级）',
+  resource: 'assignments',
+  moduleId: 'sms',
+  operation: 'command',
+  riskLevel: 'medium',
+  permission: 'sms.assignments.update',
+  approval: 'confirm',
+  timeoutMs: TIMEOUT_MS,
+  rateLimit: { max: 60, windowMs: 60_000 },
+  schema: isRecord,
+  inputJsonSchema: {
+    type: 'object',
+    properties: {
+      submissionId: { type: 'integer', minimum: 1 },
+      score: { type: 'number', minimum: 0, maximum: 1000 },
+      feedback: { type: 'string' }
+    },
+    required: ['submissionId', 'score'],
+    additionalProperties: false
+  },
+  authorize: actor => write(actor, 'update', 'assignments'),
+  preview: (input): PreviewResult => {
+    const args = isRecord(input) ? input : {}
+    return {
+      summary: `将批改提交 #${String(args.submissionId ?? '')}，得分 ${String(args.score ?? '')}。`,
+      details: { submissionId: args.submissionId, score: args.score },
+      impact: 1
+    }
+  },
+  execute: (input, actor) => gradeSubmission(actor, isRecord(input) ? input : {}),
+  summarize: (value) => {
+    const row = isRecord(value) ? value : {}
+    return `批改完成：${row.score ?? '-'} 分`
+  }
+}
+
+const electionsList: Capability = {
+  id: 'sms.elections.list',
+  title: '查询选课',
+  description: '查询学生选课记录（学生仅能看到自己的记录）',
+  resource: 'elections',
+  moduleId: 'sms',
+  operation: 'query',
+  riskLevel: 'low',
+  permission: 'sms.elections.read',
+  approval: 'none',
+  timeoutMs: TIMEOUT_MS,
+  rateLimit: { max: 60, windowMs: 60_000 },
+  schema: isRecord,
+  inputJsonSchema: {
+    type: 'object',
+    properties: {
+      studentId: { type: 'integer', minimum: 1 },
+      termId: { type: 'integer', minimum: 1 },
+      status: { type: 'string', enum: ['selected', 'dropped'] },
+      limit: { type: 'integer', minimum: 1, maximum: 300 }
+    },
+    additionalProperties: false
+  },
+  authorize: actor => read(actor, 'elections'),
+  execute: (input, actor) => listElections(actor, isRecord(input) ? input : {}),
+  summarize: rows => listSummary('选课记录', rows),
+  resultView: {
+    kind: 'table',
+    columns: [
+      { key: 'studentId', label: '学生 ID', format: 'number' },
+      { key: 'subjectId', label: '科目 ID', format: 'number' },
+      { key: 'termId', label: '学期 ID', format: 'number' },
+      { key: 'status', label: '状态' },
+      { key: 'electedAt', label: '时间', format: 'datetime' }
+    ]
+  }
+}
+
+const electionsUpdate: Capability = {
+  id: 'sms.elections.update',
+  title: '选课/退选',
+  description: '学生选择或退选一门课程（同一科目学期内幂等）',
+  resource: 'elections',
+  moduleId: 'sms',
+  operation: 'command',
+  riskLevel: 'low',
+  permission: 'sms.elections.create',
+  approval: 'confirm',
+  timeoutMs: TIMEOUT_MS,
+  rateLimit: { max: 30, windowMs: 60_000 },
+  schema: isRecord,
+  inputJsonSchema: {
+    type: 'object',
+    properties: {
+      subjectId: { type: 'integer', minimum: 1 },
+      termId: { type: 'integer', minimum: 1 },
+      action: { type: 'string', enum: ['elect', 'drop'] }
+    },
+    required: ['subjectId', 'termId'],
+    additionalProperties: false
+  },
+  authorize: actor => canUseSms(actor, 'create', 'elections'),
+  preview: (input): PreviewResult => {
+    const args = isRecord(input) ? input : {}
+    return {
+      summary: args.action === 'drop'
+        ? `将退选科目 ${String(args.subjectId ?? '')}。`
+        : `将选择科目 ${String(args.subjectId ?? '')}。`,
+      details: { subjectId: args.subjectId, termId: args.termId, action: args.action ?? 'elect' },
+      impact: 1
+    }
+  },
+  execute: (input, actor) => setCourseElection(actor, isRecord(input) ? input : {}),
+  summarize: (value) => {
+    const row = isRecord(value) ? value : {}
+    return `选课状态：${row.status ?? '-'}`
+  }
+}
+
 export const smsCapabilities: Capability[] = [
   studentSearch,
   studentGet,
@@ -3670,5 +4353,20 @@ export const smsCapabilities: Capability[] = [
   reportsAttendance,
   reportsScores,
   reportsFinance,
-  reportsExport
+  reportsExport,
+  notificationsList,
+  notificationsSend,
+  knowledgeSearch,
+  knowledgeCreate,
+  studentsImport,
+  reportsDaily,
+  agentTasksList,
+  agentTasksCreate,
+  agentTasksAdvance,
+  assignmentsCreate,
+  assignmentsList,
+  assignmentsSubmit,
+  assignmentsGrade,
+  electionsList,
+  electionsUpdate
 ]

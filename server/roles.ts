@@ -30,7 +30,13 @@ const STAFF_READ = [
   'sms.attendance.read',
   'sms.leave.read',
   'sms.scores.read',
-  'sms.timetable.read'
+  'sms.timetable.read',
+  'sms.notifications.read',
+  'sms.knowledge.read',
+  'sms.agent-tasks.read',
+  'sms.agent-tasks.create',
+  'sms.assignments.read',
+  'sms.elections.read'
 ] as const
 
 /** Every read permission the SMS module declares (for leadership roles). */
@@ -65,6 +71,8 @@ export const SMS_ROLE_PRESETS: readonly SmsRolePreset[] = [
       ...ALL_READ,
       'sms.leave.approve',
       'sms.reports.export',
+      'sms.notifications.send',
+      'sms.knowledge.create',
       ...SCOPE_ALL
     ]
   },
@@ -87,6 +95,9 @@ export const SMS_ROLE_PRESETS: readonly SmsRolePreset[] = [
       'sms.applications.convert',
       'sms.timetable.update',
       'sms.timetable.publish',
+      'sms.assignments.update',
+      'sms.notifications.send',
+      'sms.knowledge.create',
       ...SCOPE_ALL
     ]
   },
@@ -98,6 +109,7 @@ export const SMS_ROLE_PRESETS: readonly SmsRolePreset[] = [
       'sms.approvals.read',
       'sms.applications.read',
       'sms.reports.read',
+      'sms.knowledge.create',
       'sms.students.create',
       'sms.students.update',
       'sms.students.delete',
@@ -112,6 +124,7 @@ export const SMS_ROLE_PRESETS: readonly SmsRolePreset[] = [
       'sms.report-cards.generate',
       'sms.applications.review',
       'sms.timetable.update',
+      'sms.assignments.update',
       ...SCOPE_ALL
     ]
   },
@@ -126,7 +139,8 @@ export const SMS_ROLE_PRESETS: readonly SmsRolePreset[] = [
       'sms.leave.approve',
       'sms.exams.create',
       'sms.scores.update',
-      'sms.report-cards.generate'
+      'sms.report-cards.generate',
+      'sms.assignments.update'
     ]
   },
   {
@@ -142,6 +156,11 @@ export const SMS_ROLE_PRESETS: readonly SmsRolePreset[] = [
       'sms.scores.read',
       'sms.scores.update',
       'sms.timetable.read',
+      'sms.notifications.read',
+      'sms.knowledge.read',
+      'sms.assignments.read',
+      'sms.assignments.update',
+      'sms.elections.read',
       'sms.exams.create',
       'sms.report-cards.generate'
     ]
@@ -164,7 +183,10 @@ export const SMS_ROLE_PRESETS: readonly SmsRolePreset[] = [
       'sms.approvals.read',
       'sms.scores.read',
       'sms.report-cards.generate',
-      'sms.timetable.read'
+      'sms.timetable.read',
+      'sms.assignments.read',
+      'sms.assignments.update',
+      'sms.elections.read'
     ]
   },
   {
@@ -184,7 +206,10 @@ export const SMS_ROLE_PRESETS: readonly SmsRolePreset[] = [
       'sms.exams.create',
       'sms.scores.read',
       'sms.scores.update',
-      'sms.timetable.read'
+      'sms.timetable.read',
+      'sms.assignments.read',
+      'sms.assignments.update',
+      'sms.elections.read'
     ]
   },
   {
@@ -197,7 +222,13 @@ export const SMS_ROLE_PRESETS: readonly SmsRolePreset[] = [
       'sms.leave.read',
       'sms.leave.create',
       'sms.scores.read',
-      'sms.timetable.read'
+      'sms.timetable.read',
+      'sms.notifications.read',
+      'sms.knowledge.read',
+      'sms.assignments.read',
+      'sms.assignments.submit',
+      'sms.elections.read',
+      'sms.elections.create'
     ]
   },
   {
@@ -212,7 +243,11 @@ export const SMS_ROLE_PRESETS: readonly SmsRolePreset[] = [
       'sms.leave.create',
       'sms.scores.read',
       'sms.timetable.read',
-      'sms.finance.read'
+      'sms.finance.read',
+      'sms.notifications.read',
+      'sms.knowledge.read',
+      'sms.assignments.read',
+      'sms.elections.read'
     ]
   },
   {
@@ -235,7 +270,9 @@ export const SMS_ROLE_PRESETS: readonly SmsRolePreset[] = [
       'sms.applications.review',
       'sms.applications.convert',
       'sms.admission-cycles.create',
-      'sms.reports.read'
+      'sms.reports.read',
+      'sms.notifications.read',
+      'sms.knowledge.read'
     ]
   },
   {
@@ -249,7 +286,9 @@ export const SMS_ROLE_PRESETS: readonly SmsRolePreset[] = [
       'sms.finance.update',
       'sms.finance.refund-approve',
       'sms.reports.read',
-      'sms.reports.export'
+      'sms.reports.export',
+      'sms.notifications.read',
+      'sms.knowledge.read'
     ]
   },
   {
@@ -259,7 +298,9 @@ export const SMS_ROLE_PRESETS: readonly SmsRolePreset[] = [
       'sms.teachers.read',
       'sms.teachers.update',
       'sms.classes.read',
-      'sms.academic-years.read'
+      'sms.academic-years.read',
+      'sms.notifications.read',
+      'sms.knowledge.read'
     ]
   },
   {
@@ -269,7 +310,9 @@ export const SMS_ROLE_PRESETS: readonly SmsRolePreset[] = [
       'sms.assets.read',
       'sms.assets.update',
       'sms.teachers.read',
-      'sms.reports.read'
+      'sms.reports.read',
+      'sms.notifications.read',
+      'sms.knowledge.read'
     ]
   },
   {
@@ -279,7 +322,9 @@ export const SMS_ROLE_PRESETS: readonly SmsRolePreset[] = [
       'sms.library.read',
       'sms.library.update',
       'sms.students.read',
-      'sms.classes.read'
+      'sms.classes.read',
+      'sms.notifications.read',
+      'sms.knowledge.read'
     ]
   },
   {
@@ -290,7 +335,9 @@ export const SMS_ROLE_PRESETS: readonly SmsRolePreset[] = [
       'sms.guardians.read',
       'sms.attendance.read',
       'sms.leave.read',
-      'sms.approvals.read'
+      'sms.approvals.read',
+      'sms.notifications.read',
+      'sms.knowledge.read'
     ]
   }
 ]

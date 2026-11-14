@@ -693,5 +693,182 @@ export const smsMigrations: ModuleMigration[] = [
           ON sms_report_runs (organization_id, kind, period_start);
       `)
     }
+  },
+  {
+    id: 'sms:013-notifications',
+    checksum: '1',
+    async up(executor) {
+      const client = executor as SqlExecutor
+      await client.query(`
+        CREATE TABLE IF NOT EXISTS sms_notifications (
+          id                 serial PRIMARY KEY,
+          organization_id    integer NOT NULL,
+          tenant_id          integer,
+          recipient_user_id  integer NOT NULL,
+          category           varchar(40) NOT NULL DEFAULT 'system',
+          title              varchar(160) NOT NULL,
+          body               varchar(1000),
+          link               varchar(255),
+          entity_type        varchar(40),
+          entity_id          integer,
+          status             varchar(20) NOT NULL DEFAULT 'unread',
+          read_at            timestamptz,
+          created_at         timestamptz NOT NULL DEFAULT now()
+        );
+        CREATE INDEX IF NOT EXISTS sms_notifications_recipient_idx
+          ON sms_notifications (organization_id, recipient_user_id, status, created_at);
+        CREATE INDEX IF NOT EXISTS sms_notifications_org_created_idx
+          ON sms_notifications (organization_id, created_at);
+      `)
+    }
+  },
+  {
+    id: 'sms:014-approval-escalation',
+    checksum: '1',
+    async up(executor) {
+      const client = executor as SqlExecutor
+      await client.query(`
+        ALTER TABLE sms_approval_tasks ADD COLUMN IF NOT EXISTS due_at timestamptz;
+        ALTER TABLE sms_approval_tasks ADD COLUMN IF NOT EXISTS escalated_at timestamptz;
+        UPDATE sms_approval_tasks
+           SET due_at = created_at + interval '48 hours'
+         WHERE due_at IS NULL AND status = 'pending';
+        CREATE INDEX IF NOT EXISTS sms_approval_tasks_due_idx
+          ON sms_approval_tasks (organization_id, status, due_at);
+      `)
+    }
+  },
+  {
+    id: 'sms:015-knowledge-base',
+    checksum: '1',
+    async up(executor) {
+      const client = executor as SqlExecutor
+      await client.query(`
+        CREATE TABLE IF NOT EXISTS sms_knowledge_articles (
+          id               serial PRIMARY KEY,
+          organization_id  integer NOT NULL,
+          tenant_id        integer,
+          title            varchar(200) NOT NULL,
+          content          text NOT NULL,
+          tags             varchar(255),
+          audience         varchar(20) NOT NULL DEFAULT 'all',
+          status           varchar(20) NOT NULL DEFAULT 'published',
+          created_by       integer NOT NULL,
+          updated_at       timestamptz NOT NULL DEFAULT now(),
+          created_at       timestamptz NOT NULL DEFAULT now()
+        );
+        CREATE INDEX IF NOT EXISTS sms_knowledge_articles_org_status_idx
+          ON sms_knowledge_articles (organization_id, status, updated_at);
+        CREATE INDEX IF NOT EXISTS sms_knowledge_articles_title_idx
+          ON sms_knowledge_articles (organization_id, title);
+      `)
+    }
+  },
+  {
+    id: 'sms:016-report-daily',
+    checksum: '1',
+    async up(executor) {
+      const client = executor as SqlExecutor
+      await client.query(`
+        CREATE TABLE IF NOT EXISTS sms_report_daily (
+          id               serial PRIMARY KEY,
+          organization_id  integer NOT NULL,
+          tenant_id        integer,
+          report_date      date NOT NULL,
+          class_id         integer NOT NULL DEFAULT 0,
+          present          integer NOT NULL DEFAULT 0,
+          late             integer NOT NULL DEFAULT 0,
+          absent           integer NOT NULL DEFAULT 0,
+          leave            integer NOT NULL DEFAULT 0,
+          total            integer NOT NULL DEFAULT 0,
+          generated_at     timestamptz NOT NULL DEFAULT now()
+        );
+        CREATE UNIQUE INDEX IF NOT EXISTS sms_report_daily_unique_idx
+          ON sms_report_daily (organization_id, report_date, class_id);
+      `)
+    }
+  },
+  {
+    id: 'sms:017-agent-tasks',
+    checksum: '1',
+    async up(executor) {
+      const client = executor as SqlExecutor
+      await client.query(`
+        CREATE TABLE IF NOT EXISTS sms_agent_tasks (
+          id               serial PRIMARY KEY,
+          organization_id  integer NOT NULL,
+          tenant_id        integer,
+          owner_user_id    integer NOT NULL,
+          title            varchar(200) NOT NULL,
+          goal             varchar(2000),
+          status           varchar(30) NOT NULL DEFAULT 'pending',
+          step             integer NOT NULL DEFAULT 0,
+          max_steps        integer NOT NULL DEFAULT 8,
+          payload          jsonb,
+          result           jsonb,
+          last_error       varchar(500),
+          updated_at       timestamptz NOT NULL DEFAULT now(),
+          created_at       timestamptz NOT NULL DEFAULT now()
+        );
+        CREATE INDEX IF NOT EXISTS sms_agent_tasks_owner_idx
+          ON sms_agent_tasks (organization_id, owner_user_id, status, updated_at);
+      `)
+    }
+  },
+  {
+    id: 'sms:018-teaching',
+    checksum: '1',
+    async up(executor) {
+      const client = executor as SqlExecutor
+      await client.query(`
+        CREATE TABLE IF NOT EXISTS sms_assignments (
+          id               serial PRIMARY KEY,
+          organization_id  integer NOT NULL,
+          tenant_id        integer,
+          class_id         integer NOT NULL,
+          subject_id       integer NOT NULL,
+          title            varchar(200) NOT NULL,
+          description      text,
+          due_at           timestamptz,
+          status           varchar(20) NOT NULL DEFAULT 'draft',
+          created_by       integer NOT NULL,
+          updated_at       timestamptz NOT NULL DEFAULT now(),
+          created_at       timestamptz NOT NULL DEFAULT now()
+        );
+        CREATE INDEX IF NOT EXISTS sms_assignments_class_idx
+          ON sms_assignments (organization_id, class_id, status, due_at);
+
+        CREATE TABLE IF NOT EXISTS sms_assignment_submissions (
+          id             serial PRIMARY KEY,
+          organization_id integer NOT NULL,
+          tenant_id      integer,
+          assignment_id  integer NOT NULL,
+          student_id     integer NOT NULL,
+          content        text,
+          status         varchar(20) NOT NULL DEFAULT 'submitted',
+          score          numeric(6,2),
+          feedback       varchar(500),
+          submitted_at   timestamptz NOT NULL DEFAULT now(),
+          graded_by      integer,
+          graded_at      timestamptz
+        );
+        CREATE UNIQUE INDEX IF NOT EXISTS sms_assignment_submissions_unique_idx
+          ON sms_assignment_submissions (organization_id, assignment_id, student_id);
+
+        CREATE TABLE IF NOT EXISTS sms_course_elections (
+          id             serial PRIMARY KEY,
+          organization_id integer NOT NULL,
+          tenant_id      integer,
+          student_id     integer NOT NULL,
+          subject_id     integer NOT NULL,
+          term_id        integer NOT NULL,
+          status         varchar(20) NOT NULL DEFAULT 'selected',
+          elected_at     timestamptz NOT NULL DEFAULT now(),
+          updated_at     timestamptz NOT NULL DEFAULT now()
+        );
+        CREATE UNIQUE INDEX IF NOT EXISTS sms_course_elections_unique_idx
+          ON sms_course_elections (organization_id, student_id, subject_id, term_id);
+      `)
+    }
   }
 ]

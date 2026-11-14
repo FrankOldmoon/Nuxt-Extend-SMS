@@ -11,6 +11,11 @@ import { describeAgentTools, extractUiDirective, runAgentLoop } from '../../../s
 import { registerSmsModule } from '../register'
 import { createStudent, searchStudents } from '../server/students'
 import type { SmsActor } from '../server/context'
+import { createNotifications, listNotifications, markNotificationRead } from '../server/notifications'
+import { findLeaveRequest } from '../server/leave'
+import { approveRefund } from '../server/finance'
+import { db } from '../../../server/database'
+import { smsLeaveRequests, smsRefunds } from '../server/database/schema'
 
 describe('SMS demo module (database)', () => {
   const suffix = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
@@ -90,12 +95,17 @@ describe('SMS demo module (database)', () => {
 
   afterAll(async () => {
     if (organizationId) {
+      await pool.query('DELETE FROM sms_notifications WHERE organization_id = $1', [organizationId])
+      await pool.query('DELETE FROM sms_leave_requests WHERE organization_id = $1', [organizationId])
       await pool.query('DELETE FROM sms_students WHERE organization_id = $1', [organizationId])
       await pool.query('DELETE FROM sms_teacher_assignments WHERE organization_id = $1', [organizationId])
       await pool.query('DELETE FROM sms_classes WHERE organization_id = $1', [organizationId])
       await pool.query('DELETE FROM organizations WHERE id = $1', [organizationId])
     }
     if (otherOrganizationId) {
+      await pool.query('DELETE FROM sms_notifications WHERE organization_id = $1', [otherOrganizationId])
+      await pool.query('DELETE FROM sms_leave_requests WHERE organization_id = $1', [otherOrganizationId])
+      await pool.query('DELETE FROM sms_refunds WHERE organization_id = $1', [otherOrganizationId])
       await pool.query('DELETE FROM sms_classes WHERE organization_id = $1', [otherOrganizationId])
       await pool.query('DELETE FROM organizations WHERE id = $1', [otherOrganizationId])
     }
@@ -245,5 +255,75 @@ describe('SMS demo module (database)', () => {
     // Searching directly (traditional page path) works without Tool Registry.
     const rows = await searchStudents(teacher)
     expect(rows.some(student => student.name === 'Teacher Student')).toBe(true)
+  })
+
+  it('keeps notifications isolated by organization and recipient', async () => {
+    await db.transaction(async (tx) => {
+      await createNotifications(tx, {
+        organizationId,
+        tenantId,
+        recipientUserIds: [admin.userId, admin.userId],
+        category: 'system',
+        title: '组织内通知'
+      })
+      await createNotifications(tx, {
+        organizationId: otherOrganizationId,
+        tenantId,
+        recipientUserIds: [admin.userId],
+        category: 'system',
+        title: '其他组织通知'
+      })
+    })
+
+    const rows = await listNotifications(admin, { status: 'all' })
+    expect(rows.map(row => row.title)).toContain('组织内通知')
+    expect(rows.map(row => row.title)).not.toContain('其他组织通知')
+
+    const target = rows.find(row => row.title === '组织内通知')!
+    await markNotificationRead(admin, target.id)
+    expect((await listNotifications(admin, { status: 'unread' })).map(row => row.id))
+      .not.toContain(target.id)
+
+    const otherReader: SmsActor = {
+      userId: admin.userId + 99,
+      roleName: 'teacher',
+      permissions: ['sms.notifications.read'],
+      organizationId,
+      tenantId
+    }
+    await expect(markNotificationRead(otherReader, target.id))
+      .rejects.toMatchObject({ statusCode: 404 })
+  })
+
+  it('returns 404 for cross-organization leave and refund access', async () => {
+    const [leave] = await db.insert(smsLeaveRequests).values({
+      organizationId: otherOrganizationId,
+      tenantId,
+      subjectType: 'staff',
+      staffUserId: 424242,
+      applicantUserId: 424242,
+      type: 'personal',
+      startAt: new Date('2026-01-01T00:00:00Z'),
+      endAt: new Date('2026-01-02T00:00:00Z'),
+      status: 'pending'
+    }).returning()
+    expect(leave).toBeTruthy()
+    await expect(findLeaveRequest(admin, leave!.id))
+      .rejects.toMatchObject({ statusCode: 404 })
+
+    const [refund] = await db.insert(smsRefunds).values({
+      organizationId: otherOrganizationId,
+      tenantId,
+      paymentId: 1,
+      invoiceId: 1,
+      amount: '10.00',
+      status: 'pending',
+      requestedBy: 424242
+    }).returning()
+    expect(refund).toBeTruthy()
+    await expect(approveRefund(admin, { refundId: refund!.id, decision: 'approve' }))
+      .rejects.toMatchObject({ statusCode: 404 })
+    await expect(approveRefund(teacher, { refundId: refund!.id, decision: 'approve' }))
+      .rejects.toMatchObject({ statusCode: 403 })
   })
 })

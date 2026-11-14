@@ -8,6 +8,7 @@ import {
   numeric,
   pgTable,
   serial,
+  text,
   timestamp,
   uniqueIndex,
   varchar
@@ -325,13 +326,19 @@ export const smsApprovalTasks = pgTable(
     comment: varchar('comment', { length: 500 }),
     decidedBy: integer('decided_by'),
     decidedAt: timestamp('decided_at', { withTimezone: true }),
+    /** SLA deadline for this step; overdue tasks are escalated by the scan job. */
+    dueAt: timestamp('due_at', { withTimezone: true }),
+    /** Set when the escalation job moved the task to a higher approver. */
+    escalatedAt: timestamp('escalated_at', { withTimezone: true }),
     createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull()
   },
   table => ({
     subjectStepIdx: uniqueIndex('sms_approval_tasks_unique_idx')
       .on(table.organizationId, table.subjectType, table.subjectId, table.step),
     assigneeIdx: index('sms_approval_tasks_assignee_idx')
-      .on(table.organizationId, table.assigneeUserId, table.status)
+      .on(table.organizationId, table.assigneeUserId, table.status),
+    dueIdx: index('sms_approval_tasks_due_idx')
+      .on(table.organizationId, table.status, table.dueAt)
   })
 )
 
@@ -767,5 +774,188 @@ export const smsReportRuns = pgTable(
   table => ({
     periodIdx: index('sms_report_runs_period_idx')
       .on(table.organizationId, table.kind, table.periodStart)
+  })
+)
+
+/**
+ * In-app notification center (P0). Rows are per recipient and organization so
+ * attendance / leave / finance events can reach the right people without
+ * touching the core notification table.
+ */
+export const smsNotifications = pgTable(
+  'sms_notifications',
+  {
+    id: serial('id').primaryKey(),
+    organizationId: integer('organization_id').notNull(),
+    tenantId: integer('tenant_id'),
+    recipientUserId: integer('recipient_user_id').notNull(),
+    /** attendance | leave | finance | approval | academic | system */
+    category: varchar('category', { length: 40 }).notNull().default('system'),
+    title: varchar('title', { length: 160 }).notNull(),
+    body: varchar('body', { length: 1000 }),
+    /** In-app route the recipient can open (never an external URL). */
+    link: varchar('link', { length: 255 }),
+    entityType: varchar('entity_type', { length: 40 }),
+    entityId: integer('entity_id'),
+    /** unread | read */
+    status: varchar('status', { length: 20 }).notNull().default('unread'),
+    readAt: timestamp('read_at', { withTimezone: true }),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull()
+  },
+  table => ({
+    recipientIdx: index('sms_notifications_recipient_idx')
+      .on(table.organizationId, table.recipientUserId, table.status, table.createdAt),
+    orgCreatedIdx: index('sms_notifications_org_created_idx')
+      .on(table.organizationId, table.createdAt)
+  })
+)
+
+/**
+ * School-rule knowledge base (P1). Articles are keyword-searchable and filtered
+ * by audience so students/guardians never see staff-only policies.
+ */
+export const smsKnowledgeArticles = pgTable(
+  'sms_knowledge_articles',
+  {
+    id: serial('id').primaryKey(),
+    organizationId: integer('organization_id').notNull(),
+    tenantId: integer('tenant_id'),
+    title: varchar('title', { length: 200 }).notNull(),
+    content: text('content').notNull(),
+    tags: varchar('tags', { length: 255 }),
+    /** all | staff | student | guardian */
+    audience: varchar('audience', { length: 20 }).notNull().default('all'),
+    /** published | draft */
+    status: varchar('status', { length: 20 }).notNull().default('published'),
+    createdBy: integer('created_by').notNull(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull()
+  },
+  table => ({
+    orgStatusIdx: index('sms_knowledge_articles_org_status_idx')
+      .on(table.organizationId, table.status, table.updatedAt),
+    titleIdx: index('sms_knowledge_articles_title_idx').on(table.organizationId, table.title)
+  })
+)
+
+/**
+ * Pre-aggregated daily attendance (P1). One row per organization/class/day so
+ * dashboards never scan the raw attendance table.
+ */
+export const smsReportDaily = pgTable(
+  'sms_report_daily',
+  {
+    id: serial('id').primaryKey(),
+    organizationId: integer('organization_id').notNull(),
+    tenantId: integer('tenant_id'),
+    reportDate: date('report_date').notNull(),
+    /** 0 = whole-school aggregate; otherwise the class id. */
+    classId: integer('class_id').notNull().default(0),
+    present: integer('present').notNull().default(0),
+    late: integer('late').notNull().default(0),
+    absent: integer('absent').notNull().default(0),
+    leave: integer('leave').notNull().default(0),
+    total: integer('total').notNull().default(0),
+    generatedAt: timestamp('generated_at', { withTimezone: true }).defaultNow().notNull()
+  },
+  table => ({
+    dailyIdx: uniqueIndex('sms_report_daily_unique_idx')
+      .on(table.organizationId, table.reportDate, table.classId)
+  })
+)
+
+/**
+ * Durable task-agent runs (P2). The chat layer creates a task, then advances it
+ * through an explicit state machine so long-running work survives a restart.
+ */
+export const smsAgentTasks = pgTable(
+  'sms_agent_tasks',
+  {
+    id: serial('id').primaryKey(),
+    organizationId: integer('organization_id').notNull(),
+    tenantId: integer('tenant_id'),
+    ownerUserId: integer('owner_user_id').notNull(),
+    title: varchar('title', { length: 200 }).notNull(),
+    goal: varchar('goal', { length: 2000 }),
+    /** pending | running | waiting_approval | done | failed | cancelled */
+    status: varchar('status', { length: 30 }).notNull().default('pending'),
+    step: integer('step').notNull().default(0),
+    maxSteps: integer('max_steps').notNull().default(8),
+    payload: jsonb('payload').$type<Record<string, unknown>>(),
+    result: jsonb('result').$type<Record<string, unknown>>(),
+    lastError: varchar('last_error', { length: 500 }),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull()
+  },
+  table => ({
+    ownerIdx: index('sms_agent_tasks_owner_idx')
+      .on(table.organizationId, table.ownerUserId, table.status, table.updatedAt)
+  })
+)
+
+/** Teaching domain: assignments, submissions and course elections (P2). */
+export const smsAssignments = pgTable(
+  'sms_assignments',
+  {
+    id: serial('id').primaryKey(),
+    organizationId: integer('organization_id').notNull(),
+    tenantId: integer('tenant_id'),
+    classId: integer('class_id').notNull(),
+    subjectId: integer('subject_id').notNull(),
+    title: varchar('title', { length: 200 }).notNull(),
+    description: text('description'),
+    dueAt: timestamp('due_at', { withTimezone: true }),
+    /** draft | published | closed */
+    status: varchar('status', { length: 20 }).notNull().default('draft'),
+    createdBy: integer('created_by').notNull(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull()
+  },
+  table => ({
+    classIdx: index('sms_assignments_class_idx')
+      .on(table.organizationId, table.classId, table.status, table.dueAt)
+  })
+)
+
+export const smsAssignmentSubmissions = pgTable(
+  'sms_assignment_submissions',
+  {
+    id: serial('id').primaryKey(),
+    organizationId: integer('organization_id').notNull(),
+    tenantId: integer('tenant_id'),
+    assignmentId: integer('assignment_id').notNull(),
+    studentId: integer('student_id').notNull(),
+    content: text('content'),
+    /** submitted | graded */
+    status: varchar('status', { length: 20 }).notNull().default('submitted'),
+    score: numeric('score', { precision: 6, scale: 2 }),
+    feedback: varchar('feedback', { length: 500 }),
+    submittedAt: timestamp('submitted_at', { withTimezone: true }).defaultNow().notNull(),
+    gradedBy: integer('graded_by'),
+    gradedAt: timestamp('graded_at', { withTimezone: true })
+  },
+  table => ({
+    assignmentStudentIdx: uniqueIndex('sms_assignment_submissions_unique_idx')
+      .on(table.organizationId, table.assignmentId, table.studentId)
+  })
+)
+
+export const smsCourseElections = pgTable(
+  'sms_course_elections',
+  {
+    id: serial('id').primaryKey(),
+    organizationId: integer('organization_id').notNull(),
+    tenantId: integer('tenant_id'),
+    studentId: integer('student_id').notNull(),
+    subjectId: integer('subject_id').notNull(),
+    termId: integer('term_id').notNull(),
+    /** selected | dropped */
+    status: varchar('status', { length: 20 }).notNull().default('selected'),
+    electedAt: timestamp('elected_at', { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull()
+  },
+  table => ({
+    electionIdx: uniqueIndex('sms_course_elections_unique_idx')
+      .on(table.organizationId, table.studentId, table.subjectId, table.termId)
   })
 )
