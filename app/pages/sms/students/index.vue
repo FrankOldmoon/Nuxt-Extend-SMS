@@ -29,6 +29,7 @@ const PAGE_SIZE = 50
 
 const search = ref(typeof route.query.q === 'string' ? route.query.q : '')
 const classId = ref('')
+const childId = ref<number | null>(null)
 const classes = ref<ClassRow[]>([])
 const rows = ref<StudentRow[]>([])
 const cursor = ref<number | null>(null)
@@ -73,6 +74,7 @@ async function load(reset = false): Promise<void> {
       query: {
         q: search.value.trim() || undefined,
         classId: classId.value || undefined,
+        studentId: childId.value ?? undefined,
         cursor: cursor.value ?? undefined,
         limit: PAGE_SIZE
       }
@@ -126,6 +128,7 @@ watch(search, () => {
   debounce = setTimeout(() => void load(true), 300)
 })
 watch(classId, () => void load(true))
+watch(childId, () => void load(true))
 
 onMounted(async () => {
   await loadClasses()
@@ -199,6 +202,7 @@ onBeforeUnmount(() => {
           value-key="value"
           class="w-44"
         />
+        <SmsChildSwitcher v-model="childId" />
       </div>
 
       <p

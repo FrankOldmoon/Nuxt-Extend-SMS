@@ -122,7 +122,7 @@ import {
 } from './server/teaching'
 import { classInContext, assertAcademicYearInContext, assertGradeInContext, assertSubjectInContext, assertTermInContext, listClasses, listSubjects, listTerms } from './server/academics'
 import { assertStudentInContext } from './server/enrollment'
-import { assertGuardianInContext, guardianStudentIds } from './server/guardians'
+import { assertGuardianInContext, guardianStudentIds, listGuardianChildren } from './server/guardians'
 import {
   smsAcademicYears,
   smsClasses,
@@ -713,6 +713,15 @@ const smsApis: ModuleApiDefinition<SmsActor>[] = [
     schema: isRecord,
     authorize: actor => canUseSms(actor, 'read', 'students'),
     handler: (_event, actor, input) => listStudentMovements(actor, isRecord(input) ? input : {})
+  },
+  {
+    id: 'sms.guardian.children',
+    moduleId: 'sms',
+    method: 'GET',
+    path: 'sms/guardian/children',
+    schema: isRecord,
+    authorize: actor => canUseSms(actor, 'read', 'students'),
+    handler: (_event, actor) => listGuardianChildren(actor)
   },
   {
     id: 'sms.students.movements.create',

@@ -20,7 +20,7 @@ import {
 } from './database/schema'
 import { assertSubjectInContext, assertTermInContext } from './academics'
 import { assertClassInContext, assignedClassIds, getStudent } from './students'
-import { guardianStudentIds } from './guardians'
+import { guardianStudentIds, resolveGuardianStudentId } from './guardians'
 import { canUseSms, isSmsAdmin, requireSmsOrganization, type SmsActor } from './context'
 
 export const ASSIGNMENT_STATUSES = ['draft', 'published', 'closed'] as const
@@ -204,6 +204,8 @@ export async function createAssignment(actor: SmsActor, input: CreateAssignmentI
 export interface ListAssignmentQuery {
   classId?: unknown
   status?: unknown
+  /** 家长当前子女；必须属于 guardianStudentIds。 */
+  studentId?: unknown
   limit?: unknown
 }
 
@@ -216,9 +218,22 @@ export async function listAssignments(actor: SmsActor, options: ListAssignmentQu
     conditions.push(eq(smsAssignments.classId, student.classId ?? -1))
     conditions.push(eq(smsAssignments.status, 'published'))
   } else if (actor.roleName === 'guardian') {
-    const classIds = await guardianClassIds(actor)
-    if (classIds.length === 0) return []
-    conditions.push(inArray(smsAssignments.classId, classIds))
+    const requested = await resolveGuardianStudentId(actor, options.studentId)
+    if (requested !== null) {
+      // 指定当前子女时按该子女的班级过滤，避免把其他子女班级的作业混在一起。
+      const [child] = await db.select({ classId: smsStudents.classId }).from(smsStudents)
+        .where(and(
+          eq(smsStudents.organizationId, organizationId),
+          eq(smsStudents.id, requested),
+          isNull(smsStudents.deletedAt)
+        ))
+        .limit(1)
+      conditions.push(child?.classId ? eq(smsAssignments.classId, child.classId) : eq(smsAssignments.id, -1))
+    } else {
+      const classIds = await guardianClassIds(actor)
+      if (classIds.length === 0) return []
+      conditions.push(inArray(smsAssignments.classId, classIds))
+    }
     conditions.push(eq(smsAssignments.status, 'published'))
   } else if (!hasSchoolWide(actor)) {
     const classIds = await teachingClassIds(actor)
@@ -430,9 +445,14 @@ export async function listElections(actor: SmsActor, options: ElectionQuery = {}
     const student = await resolveStudent(actor)
     conditions.push(eq(smsCourseElections.studentId, student.id))
   } else if (actor.roleName === 'guardian') {
-    const studentIds = await guardianStudentIds(actor)
-    if (studentIds.length === 0) return []
-    conditions.push(inArray(smsCourseElections.studentId, studentIds))
+    const requested = await resolveGuardianStudentId(actor, options.studentId)
+    if (requested !== null) {
+      conditions.push(eq(smsCourseElections.studentId, requested))
+    } else {
+      const studentIds = await guardianStudentIds(actor)
+      if (studentIds.length === 0) return []
+      conditions.push(inArray(smsCourseElections.studentId, studentIds))
+    }
   } else {
     if (options.studentId !== undefined && options.studentId !== null && options.studentId !== '') {
       conditions.push(eq(smsCourseElections.studentId, positiveId(options.studentId, 'studentId')))

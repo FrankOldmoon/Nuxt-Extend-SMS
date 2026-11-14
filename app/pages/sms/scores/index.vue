@@ -39,6 +39,7 @@ const classes = ref<ClassRow[]>([])
 const rows = ref<ScoreRow[]>([])
 const examId = ref('')
 const classId = ref('')
+const childId = ref<number | null>(null)
 const search = ref(typeof route.query.q === 'string' ? route.query.q : '')
 const loading = ref(false)
 const initialized = ref(false)
@@ -79,6 +80,7 @@ async function load(): Promise<void> {
       query: {
         examId: examId.value || undefined,
         classId: classId.value || undefined,
+        studentId: childId.value ?? undefined,
         q: search.value.trim() || undefined,
         limit: 200
       }
@@ -120,7 +122,7 @@ function exportCsv(): void {
 }
 
 let debounce: ReturnType<typeof setTimeout> | null = null
-watch([examId, classId], () => void load())
+watch([examId, classId, childId], () => void load())
 watch(search, () => {
   if (debounce) clearTimeout(debounce)
   debounce = setTimeout(() => void load(), 300)
@@ -196,6 +198,7 @@ onBeforeUnmount(() => {
           value-key="value"
           class="w-44"
         />
+        <SmsChildSwitcher v-model="childId" />
       </div>
 
       <p

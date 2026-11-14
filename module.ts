@@ -154,6 +154,7 @@ export const smsModule: ModuleDefinition = {
     'POST /api/modules/sms/students',
     'GET /api/modules/sms/students/movements',
     'POST /api/modules/sms/students/movements',
+    'GET /api/modules/sms/guardian/children',
     'GET /api/modules/sms/classes',
     'GET /api/modules/sms/subjects',
     'GET /api/modules/sms/terms',

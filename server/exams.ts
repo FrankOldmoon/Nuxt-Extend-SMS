@@ -28,7 +28,7 @@ import {
 } from './database/schema'
 import { canUseSms, isSmsAdmin, requireSmsOrganization, type SmsActor } from './context'
 import { getStudent } from './students'
-import { guardianStudentIds } from './guardians'
+import { guardianStudentIds, resolveGuardianStudentId } from './guardians'
 import { assertSubjectInContext, assertTermInContext } from './academics'
 
 export const EXAM_STATUSES = ['draft', 'published', 'closed'] as const
@@ -971,6 +971,17 @@ export async function listScores(actor: SmsActor, options: ScoreQuery = {}) {
         ))
         .limit(1)
       conditions.push(eq(smsExamScores.studentId, row?.id ?? -1))
+    } else {
+      // 家长多子女：只返回本人关联学生的成绩，并按当前子女进一步过滤。
+      const childIds = await guardianStudentIds(actor)
+      const guardianStudentId = await resolveGuardianStudentId(actor, options.studentId)
+      if (guardianStudentId !== null) {
+        conditions.push(eq(smsExamScores.studentId, guardianStudentId))
+      } else {
+        conditions.push(childIds.length
+          ? inArray(smsExamScores.studentId, childIds)
+          : eq(smsExamScores.studentId, -1))
+      }
     }
   } else {
     const studentId = optionalId(options.studentId)

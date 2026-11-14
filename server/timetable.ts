@@ -21,7 +21,7 @@ import {
 } from './database/schema'
 import { canUseSms, isSmsAdmin, requireSmsOrganization, type SmsActor } from './context'
 import { assertSubjectInContext, assertTermInContext } from './academics'
-import { guardianStudentIds } from './guardians'
+import { guardianStudentIds, resolveGuardianStudentId } from './guardians'
 
 export const TIMETABLE_STATUSES = ['draft', 'published'] as const
 export type TimetableStatus = typeof TIMETABLE_STATUSES[number]
@@ -286,6 +286,8 @@ export interface TimetableListQuery {
   termId?: unknown
   classId?: unknown
   teacherUserId?: unknown
+  /** 家长当前子女；必须属于 guardianStudentIds。 */
+  studentId?: unknown
   status?: unknown
   limit?: unknown
 }
@@ -299,6 +301,22 @@ export async function listTimetable(actor: SmsActor, options: TimetableListQuery
   }
   if (isStudentFacing(actor)) {
     conditions.push(eq(smsTimetableEntries.status, 'published'))
+    if (actor.roleName === 'guardian' && options.studentId !== undefined && options.studentId !== null && options.studentId !== '') {
+      // 家长切换子女后只看该子女班级的课表。
+      const studentId = await resolveGuardianStudentId(actor, options.studentId)
+      if (studentId !== null) {
+        const [child] = await db.select({ classId: smsStudents.classId }).from(smsStudents)
+          .where(and(
+            eq(smsStudents.organizationId, organizationId),
+            eq(smsStudents.id, studentId),
+            isNull(smsStudents.deletedAt)
+          ))
+          .limit(1)
+        conditions.push(child?.classId
+          ? eq(smsTimetableEntries.classId, child.classId)
+          : eq(smsTimetableEntries.id, -1))
+      }
+    }
   } else if (options.status !== undefined && options.status !== null && options.status !== '') {
     conditions.push(eq(smsTimetableEntries.status, normalizeTimetableStatus(options.status)))
   }

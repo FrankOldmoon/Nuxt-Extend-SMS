@@ -58,6 +58,7 @@ const teachers = ref<TeacherRow[]>([])
 const termId = ref('')
 const classId = ref('')
 const status = ref('')
+const childId = ref<number | null>(null)
 const entries = ref<EntryRow[]>([])
 const substitutions = ref<SubstitutionRow[]>([])
 const loading = ref(false)
@@ -176,6 +177,7 @@ async function loadEntries(): Promise<void> {
       query: {
         termId: termId.value || undefined,
         classId: classId.value || undefined,
+        studentId: childId.value ?? undefined,
         status: status.value || undefined,
         limit: 400
       }
@@ -296,6 +298,7 @@ watch([termId, classId, status], () => {
   void loadEntries()
   void loadSubstitutions()
 })
+watch(childId, () => void loadEntries())
 
 watch(() => sub.entryId, () => {
   const entry = entries.value.find(item => String(item.id) === sub.entryId)
@@ -387,6 +390,7 @@ onMounted(async () => {
             />
           </label>
         </div>
+        <SmsChildSwitcher v-model="childId" />
       </section>
 
       <section class="space-y-2">

@@ -2,6 +2,7 @@ import { and, asc, eq, ilike, inArray, isNull, or } from 'drizzle-orm'
 import { createError } from 'h3'
 import { db, writeAudit } from '../../../server/sdk'
 import {
+  smsClasses,
   smsGuardians,
   smsStudentGuardians,
   smsStudents,
@@ -124,6 +125,55 @@ export async function guardianStudentIds(actor: SmsActor): Promise<number[]> {
       eq(smsGuardians.userId, actor.userId)
     ))
   return rows.map(row => row.studentId)
+}
+
+export interface GuardianChild {
+  id: number
+  name: string
+  studentNo: string
+  classId: number | null
+  className: string | null
+  status: string
+}
+
+/** 家长可切换的子女；非家长或未关联学生时返回空数组。 */
+export async function listGuardianChildren(actor: SmsActor): Promise<GuardianChild[]> {
+  if (actor.roleName !== 'guardian') return []
+  const organizationId = requireSmsOrganization(actor)
+  const studentIds = await guardianStudentIds(actor)
+  if (studentIds.length === 0) return []
+  return await db.select({
+    id: smsStudents.id,
+    name: smsStudents.name,
+    studentNo: smsStudents.studentNo,
+    classId: smsStudents.classId,
+    className: smsClasses.name,
+    status: smsStudents.status
+  }).from(smsStudents)
+    .leftJoin(smsClasses, eq(smsClasses.id, smsStudents.classId))
+    .where(and(
+      eq(smsStudents.organizationId, organizationId),
+      inArray(smsStudents.id, studentIds),
+      isNull(smsStudents.deletedAt)
+    ))
+    .orderBy(asc(smsStudents.name))
+}
+
+/**
+ * 家长「当前子女」解析：请求里的 studentId 必须落在 guardianStudentIds 内。
+ * 未指定返回 null（沿用全部子女范围）；跨子女请求返回 404，避免枚举。
+ */
+export async function resolveGuardianStudentId(actor: SmsActor, value: unknown): Promise<number | null> {
+  if (value === undefined || value === null || value === '') return null
+  const studentId = Number(value)
+  if (!Number.isSafeInteger(studentId) || studentId <= 0) {
+    throw createError({ statusCode: 400, message: 'studentId must be a positive integer' })
+  }
+  const studentIds = await guardianStudentIds(actor)
+  if (!studentIds.includes(studentId)) {
+    throw createError({ statusCode: 404, message: 'Student not found' })
+  }
+  return studentId
 }
 
 /** Guardians visible to the actor (admin: all; guardian: self; others: linked). */

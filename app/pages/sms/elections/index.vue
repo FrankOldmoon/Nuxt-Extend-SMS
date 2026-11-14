@@ -46,6 +46,7 @@ const termId = ref('')
 const studentQuery = ref('')
 const studentResults = ref<StudentOption[]>([])
 const selectedStudent = ref<StudentOption | null>(null)
+const childId = ref<number | null>(null)
 const selectedSubjectIds = ref<number[]>([])
 const elections = ref<ElectionRow[]>([])
 const loading = ref(false)
@@ -92,6 +93,13 @@ function chooseStudent(student: StudentOption): void {
 function clearStudent(): void {
   selectedStudent.value = null
   selectedSubjectIds.value = []
+  void loadElections()
+}
+
+/** 家长切换子女时直接带入该子女，选科读写仍由服务端按 guardianStudentIds 校验。 */
+function onChildSelect(child: StudentOption | null): void {
+  if (!child) return
+  selectedStudent.value = child
   void loadElections()
 }
 
@@ -208,6 +216,10 @@ onBeforeUnmount(() => {
           刷新
         </UButton>
       </header>
+      <SmsChildSwitcher
+        v-model="childId"
+        @select="onChildSelect"
+      />
 
       <p
         v-if="error"
