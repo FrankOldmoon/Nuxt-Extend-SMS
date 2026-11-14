@@ -72,10 +72,14 @@ import {
 import {
   approveRefund,
   canApproveRefund,
+  confirmReconciliation,
   createFeeItem,
   createInvoice,
+  createReconciliation,
   listFeeItems,
   listInvoices,
+  listPayments,
+  listReconciliations,
   listRefunds,
   recordPayment,
   requestRefund
@@ -1064,6 +1068,42 @@ const smsApis: ModuleApiDefinition<SmsActor>[] = [
     schema: isRecord,
     authorize: actor => canUseSms(actor, 'update', 'finance'),
     handler: (_event, actor, input) => recordPayment(actor, input as Record<string, unknown>)
+  },
+  {
+    id: 'sms.payments.list',
+    moduleId: 'sms',
+    method: 'GET',
+    path: 'sms/payments',
+    schema: isRecord,
+    authorize: actor => canUseSms(actor, 'read', 'finance'),
+    handler: (_event, actor, input) => listPayments(actor, isRecord(input) ? input : {})
+  },
+  {
+    id: 'sms.reconciliations.list',
+    moduleId: 'sms',
+    method: 'GET',
+    path: 'sms/reconciliations',
+    schema: isRecord,
+    authorize: actor => canUseSms(actor, 'read', 'finance'),
+    handler: (_event, actor, input) => listReconciliations(actor, isRecord(input) ? input : {})
+  },
+  {
+    id: 'sms.reconciliations.create',
+    moduleId: 'sms',
+    method: 'POST',
+    path: 'sms/reconciliations',
+    schema: isRecord,
+    authorize: actor => canUseSms(actor, 'update', 'finance'),
+    handler: (_event, actor, input) => createReconciliation(actor, input as Record<string, unknown>)
+  },
+  {
+    id: 'sms.reconciliations.confirm',
+    moduleId: 'sms',
+    method: 'POST',
+    path: 'sms/reconciliations/confirm',
+    schema: isRecord,
+    authorize: actor => canUseSms(actor, 'update', 'finance'),
+    handler: (_event, actor, input) => confirmReconciliation(actor, Number((input as Record<string, unknown>).reconciliationId))
   },
   {
     id: 'sms.refunds.list',

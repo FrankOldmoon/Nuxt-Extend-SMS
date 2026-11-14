@@ -7,6 +7,8 @@ import {
   normalizeInvoiceStatus,
   normalizeNonNegativeAmount,
   normalizePaymentMethod,
+  normalizeReconciliationMethod,
+  normalizeReconciliationPeriod,
   normalizeRefundStatus
 } from '../server/finance'
 import { ASSET_STATUSES, normalizeAssetStatus } from '../server/assets'
@@ -38,6 +40,18 @@ describe('finance money rules', () => {
     expect(() => normalizeRefundStatus('done')).toThrow(/status/)
     expect(normalizeDueDate(undefined)).toBeNull()
     expect(() => normalizeDueDate('2026-02-30')).toThrow(/valid calendar day/)
+  })
+
+  it('normalises reconciliation periods and methods', () => {
+    expect(normalizeReconciliationPeriod('2026-03-01', '2026-03-31'))
+      .toEqual({ start: '2026-03-01', end: '2026-03-31' })
+    expect(() => normalizeReconciliationPeriod('2026-03-31', '2026-03-01'))
+      .toThrow(/不能晚于/)
+    expect(() => normalizeReconciliationPeriod(undefined, '2026-03-31'))
+      .toThrow(/不能为空/)
+    expect(normalizeReconciliationMethod(undefined)).toBeNull()
+    expect(normalizeReconciliationMethod('wechat')).toBe('wechat')
+    expect(() => normalizeReconciliationMethod('bitcoin')).toThrow(/method/)
   })
 })
 

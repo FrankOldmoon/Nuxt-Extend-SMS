@@ -737,6 +737,37 @@ export const smsPayments = pgTable(
   })
 )
 
+/**
+ * 线下缴费对账批次：按日期区间（可按支付方式）汇总已登记收款，
+ * 供财务核对银行/微信/支付宝流水后确认。不接真实支付网关。
+ */
+export const smsReconciliations = pgTable(
+  'sms_reconciliations',
+  {
+    id: serial('id').primaryKey(),
+    organizationId: integer('organization_id').notNull(),
+    tenantId: integer('tenant_id'),
+    periodStart: date('period_start').notNull(),
+    periodEnd: date('period_end').notNull(),
+    /** cash | transfer | wechat | alipay | other；null 表示全部方式 */
+    method: varchar('method', { length: 20 }),
+    /** draft | confirmed */
+    status: varchar('status', { length: 20 }).notNull().default('draft'),
+    paymentCount: integer('payment_count').notNull().default(0),
+    totalAmount: numeric('total_amount', { precision: 12, scale: 2 }).notNull().default('0'),
+    notes: varchar('notes', { length: 255 }),
+    createdBy: integer('created_by').notNull(),
+    confirmedBy: integer('confirmed_by'),
+    confirmedAt: timestamp('confirmed_at', { withTimezone: true }),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull()
+  },
+  table => ({
+    periodIdx: uniqueIndex('sms_reconciliations_period_idx')
+      .on(table.organizationId, table.periodStart, table.periodEnd, sql`COALESCE(${table.method}, 'all')`),
+    statusIdx: index('sms_reconciliations_status_idx').on(table.organizationId, table.status)
+  })
+)
+
 export const smsRefunds = pgTable(
   'sms_refunds',
   {

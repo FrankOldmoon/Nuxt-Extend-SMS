@@ -1098,5 +1098,36 @@ export const smsMigrations: ModuleMigration[] = [
           ON sms_exam_sessions (organization_id, invigilator_user_id, starts_at);
       `)
     }
+  },
+  {
+    id: 'sms:025-payment-reconciliation',
+    checksum: '1',
+    async up(executor) {
+      const client = executor as SqlExecutor
+      await client.query(`
+        CREATE TABLE IF NOT EXISTS sms_reconciliations (
+          id              serial PRIMARY KEY,
+          organization_id integer NOT NULL,
+          tenant_id       integer,
+          period_start    date NOT NULL,
+          period_end      date NOT NULL,
+          method          varchar(20),
+          status          varchar(20) NOT NULL DEFAULT 'draft',
+          payment_count   integer NOT NULL DEFAULT 0,
+          total_amount    numeric(12,2) NOT NULL DEFAULT 0,
+          notes           varchar(255),
+          created_by      integer NOT NULL,
+          confirmed_by    integer,
+          confirmed_at    timestamptz,
+          created_at      timestamptz NOT NULL DEFAULT now()
+        );
+        CREATE UNIQUE INDEX IF NOT EXISTS sms_reconciliations_period_idx
+          ON sms_reconciliations (organization_id, period_start, period_end, COALESCE(method, 'all'));
+        CREATE INDEX IF NOT EXISTS sms_reconciliations_status_idx
+          ON sms_reconciliations (organization_id, status);
+        CREATE INDEX IF NOT EXISTS sms_payments_paid_at_idx
+          ON sms_payments (organization_id, paid_at);
+      `)
+    }
   }
 ]

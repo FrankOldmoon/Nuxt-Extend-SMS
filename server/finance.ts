@@ -5,13 +5,14 @@
  * the service layer. Refunds are a high-risk, second-person action: they are
  * requested first and only applied when another approver agrees.
  */
-import { and, desc, eq, inArray, isNull } from 'drizzle-orm'
+import { and, desc, eq, gte, inArray, isNull, lt } from 'drizzle-orm'
 import { createError } from 'h3'
 import { db, writeAudit } from '../../../server/sdk'
 import {
   smsFeeItems,
   smsInvoices,
   smsPayments,
+  smsReconciliations,
   smsRefunds,
   smsStudents,
   smsTerms
@@ -20,6 +21,7 @@ import { canUseSms, isSmsAdmin, requireSmsOrganization, type SmsActor } from './
 import { getStudent } from './students'
 import { guardianStudentIds } from './guardians'
 import { assertTermInContext } from './academics'
+import { smsDateString } from './time'
 import { notifyRefundDecided, notifyRefundRequested } from './notifications'
 import { completeApprovalTask, insertApprovalSteps, loadPendingApprovalTask } from './approvals'
 
@@ -68,6 +70,28 @@ export function normalizePaymentMethod(value: unknown): PaymentMethod {
     return value as PaymentMethod
   }
   throw createError({ statusCode: 400, message: `method must be one of ${PAYMENT_METHODS.join(', ')}` })
+}
+
+export const RECONCILIATION_STATUSES = ['draft', 'confirmed'] as const
+export type ReconciliationStatus = typeof RECONCILIATION_STATUSES[number]
+
+/** 对账区间按自然日闭区间；开始日期不能晚于结束日期。 */
+export function normalizeReconciliationPeriod(start: unknown, end: unknown): { start: string, end: string } {
+  const periodStart = normalizeDueDate(start)
+  const periodEnd = normalizeDueDate(end)
+  if (!periodStart || !periodEnd) {
+    throw createError({ statusCode: 400, message: 'periodStart 与 periodEnd 不能为空' })
+  }
+  if (periodStart > periodEnd) {
+    throw createError({ statusCode: 400, message: 'periodStart 不能晚于 periodEnd' })
+  }
+  return { start: periodStart, end: periodEnd }
+}
+
+/** 对账可限定单一支付方式；空值表示全部方式。 */
+export function normalizeReconciliationMethod(value: unknown): PaymentMethod | null {
+  if (value === undefined || value === null || value === '') return null
+  return normalizePaymentMethod(value)
 }
 
 export function normalizeInvoiceStatus(value: unknown): InvoiceStatus {
@@ -424,6 +448,219 @@ export async function recordPayment(actor: SmsActor, input: RecordPaymentInput) 
       status
     }
   })
+}
+
+// ---------------------------------------------------------------------------
+// Payments (offline registration & reconciliation)
+// ---------------------------------------------------------------------------
+
+export interface PaymentListQuery {
+  invoiceId?: unknown
+  studentId?: unknown
+  method?: unknown
+  from?: unknown
+  to?: unknown
+  limit?: unknown
+}
+
+/** 业务日期区间先在 UTC 上放宽一天，再按业务时区在 JS 侧精确过滤。 */
+function paddedWindow(from: string, to: string): { start: Date, end: Date } {
+  const start = new Date(`${from}T00:00:00Z`)
+  const end = new Date(`${to}T00:00:00Z`)
+  return {
+    start: new Date(start.getTime() - 24 * 60 * 60 * 1000),
+    end: new Date(end.getTime() + 48 * 60 * 60 * 1000)
+  }
+}
+
+function inBusinessPeriod(paidAt: Date, from: string, to: string): boolean {
+  const day = smsDateString(paidAt)
+  return day >= from && day <= to
+}
+
+export async function listPayments(actor: SmsActor, options: PaymentListQuery = {}) {
+  const organizationId = requireFinanceRead(actor)
+  const conditions = [eq(smsPayments.organizationId, organizationId)]
+  const visible = await visibleStudentIds(actor, organizationId)
+  if (visible) {
+    conditions.push(visible.length ? inArray(smsInvoices.studentId, visible) : eq(smsPayments.id, -1))
+  }
+  const invoiceId = optionalId(options.invoiceId)
+  if (invoiceId) conditions.push(eq(smsPayments.invoiceId, invoiceId))
+  const studentId = optionalId(options.studentId)
+  if (studentId) conditions.push(eq(smsInvoices.studentId, studentId))
+  if (options.method !== undefined && options.method !== null && options.method !== '') {
+    conditions.push(eq(smsPayments.method, normalizePaymentMethod(options.method)))
+  }
+
+  const from = typeof options.from === 'string' && options.from.trim()
+    ? normalizeDueDate(options.from)
+    : null
+  const to = typeof options.to === 'string' && options.to.trim()
+    ? normalizeDueDate(options.to)
+    : null
+  if (from && to) {
+    if (from > to) throw createError({ statusCode: 400, message: 'from 不能晚于 to' })
+    const window = paddedWindow(from, to)
+    conditions.push(gte(smsPayments.paidAt, window.start), lt(smsPayments.paidAt, window.end))
+  }
+
+  const limit = Math.min(Math.max(Math.floor(Number(options.limit ?? 100) || 100), 1), 500)
+  const rows = await db.select({
+    id: smsPayments.id,
+    invoiceId: smsPayments.invoiceId,
+    studentId: smsInvoices.studentId,
+    studentName: smsStudents.name,
+    studentNo: smsStudents.studentNo,
+    feeName: smsFeeItems.name,
+    amount: smsPayments.amount,
+    method: smsPayments.method,
+    reference: smsPayments.reference,
+    paidAt: smsPayments.paidAt,
+    receivedBy: smsPayments.receivedBy
+  }).from(smsPayments)
+    .innerJoin(smsInvoices, eq(smsInvoices.id, smsPayments.invoiceId))
+    .leftJoin(smsStudents, eq(smsStudents.id, smsInvoices.studentId))
+    .leftJoin(smsFeeItems, eq(smsFeeItems.id, smsInvoices.feeItemId))
+    .where(and(...conditions))
+    .orderBy(desc(smsPayments.paidAt))
+    .limit(limit)
+
+  const filtered = from && to
+    ? rows.filter(row => inBusinessPeriod(row.paidAt, from, to))
+    : rows
+  return filtered.map(row => ({ ...row, amount: Number(row.amount) }))
+}
+
+export interface ReconciliationListQuery {
+  status?: unknown
+  limit?: unknown
+}
+
+export async function listReconciliations(actor: SmsActor, options: ReconciliationListQuery = {}) {
+  const organizationId = requireFinanceRead(actor)
+  const conditions = [eq(smsReconciliations.organizationId, organizationId)]
+  if (options.status === 'draft' || options.status === 'confirmed') {
+    conditions.push(eq(smsReconciliations.status, options.status))
+  }
+  const limit = Math.min(Math.max(Math.floor(Number(options.limit ?? 50) || 50), 1), 200)
+  const rows = await db.select().from(smsReconciliations)
+    .where(and(...conditions))
+    .orderBy(desc(smsReconciliations.periodStart), desc(smsReconciliations.id))
+    .limit(limit)
+  return rows.map(row => ({
+    ...row,
+    totalAmount: Number(row.totalAmount)
+  }))
+}
+
+export interface CreateReconciliationInput {
+  periodStart?: unknown
+  periodEnd?: unknown
+  method?: unknown
+  notes?: unknown
+}
+
+export async function createReconciliation(actor: SmsActor, input: CreateReconciliationInput) {
+  const organizationId = requireFinanceWrite(actor)
+  const period = normalizeReconciliationPeriod(input.periodStart, input.periodEnd)
+  const method = normalizeReconciliationMethod(input.method)
+  const notes = typeof input.notes === 'string' && input.notes.trim()
+    ? input.notes.trim().slice(0, 255)
+    : null
+
+  const conditions = [
+    eq(smsReconciliations.organizationId, organizationId),
+    eq(smsReconciliations.periodStart, period.start),
+    eq(smsReconciliations.periodEnd, period.end),
+    method === null ? isNull(smsReconciliations.method) : eq(smsReconciliations.method, method)
+  ]
+  const [duplicate] = await db.select({ id: smsReconciliations.id }).from(smsReconciliations)
+    .where(and(...conditions))
+    .limit(1)
+  if (duplicate) {
+    throw createError({ statusCode: 409, message: '该区间已存在对账批次' })
+  }
+
+  const window = paddedWindow(period.start, period.end)
+  const paymentConditions = [
+    eq(smsPayments.organizationId, organizationId),
+    gte(smsPayments.paidAt, window.start),
+    lt(smsPayments.paidAt, window.end)
+  ]
+  if (method !== null) paymentConditions.push(eq(smsPayments.method, method))
+  const payments = await db.select({
+    amount: smsPayments.amount,
+    paidAt: smsPayments.paidAt
+  }).from(smsPayments)
+    .where(and(...paymentConditions))
+
+  const scoped = payments.filter(row => inBusinessPeriod(row.paidAt, period.start, period.end))
+  const totalAmount = round2(scoped.reduce((sum, row) => sum + Number(row.amount), 0))
+
+  return await db.transaction(async (tx) => {
+    const [row] = await tx.insert(smsReconciliations).values({
+      organizationId,
+      tenantId: actor.tenantId ?? null,
+      periodStart: period.start,
+      periodEnd: period.end,
+      method,
+      status: 'draft',
+      paymentCount: scoped.length,
+      totalAmount: totalAmount.toFixed(2),
+      notes,
+      createdBy: actor.userId
+    }).returning()
+    if (!row) throw createError({ statusCode: 500, message: 'Failed to create reconciliation' })
+    await writeAudit(tx, {
+      actorUserId: actor.userId,
+      tenantId: actor.tenantId ?? undefined,
+      organizationId,
+      moduleId: 'sms',
+      action: 'reconciliation.create',
+      resource: 'finance',
+      recordId: row.id,
+      after: { ...period, method, paymentCount: scoped.length, totalAmount },
+      source: 'sms-service'
+    })
+    return { ...row, totalAmount: Number(row.totalAmount) }
+  })
+}
+
+export async function confirmReconciliation(actor: SmsActor, reconciliationId: number) {
+  const organizationId = requireFinanceWrite(actor)
+  const id = positiveId(reconciliationId, 'reconciliationId')
+  const [row] = await db.select().from(smsReconciliations)
+    .where(and(
+      eq(smsReconciliations.id, id),
+      eq(smsReconciliations.organizationId, organizationId)
+    ))
+    .limit(1)
+  if (!row) throw createError({ statusCode: 404, message: 'Reconciliation not found' })
+  if (row.status === 'confirmed') {
+    return { id, status: 'confirmed' as const, totalAmount: Number(row.totalAmount) }
+  }
+
+  await db.transaction(async (tx) => {
+    await tx.update(smsReconciliations)
+      .set({ status: 'confirmed', confirmedBy: actor.userId, confirmedAt: new Date() })
+      .where(and(
+        eq(smsReconciliations.id, id),
+        eq(smsReconciliations.organizationId, organizationId)
+      ))
+    await writeAudit(tx, {
+      actorUserId: actor.userId,
+      tenantId: actor.tenantId ?? undefined,
+      organizationId,
+      moduleId: 'sms',
+      action: 'reconciliation.confirm',
+      resource: 'finance',
+      recordId: id,
+      after: { status: 'confirmed' },
+      source: 'sms-service'
+    })
+  })
+  return { id, status: 'confirmed' as const, totalAmount: Number(row.totalAmount) }
 }
 
 // ---------------------------------------------------------------------------
