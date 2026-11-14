@@ -6,7 +6,7 @@
  * filtered by audience so student/guardian-facing chat cannot quote staff-only
  * policies.
  */
-import { and, desc, eq, ilike, inArray, or } from 'drizzle-orm'
+import { and, desc, eq, ilike, inArray, isNull, or } from 'drizzle-orm'
 import { createError } from 'h3'
 import { db, writeAudit } from '../../../server/sdk'
 import { smsKnowledgeArticles } from './database/schema'
@@ -75,6 +75,32 @@ async function refreshArticleEmbedding(articleId: number, title: string, content
   } catch {
     // 向量写入失败不影响文章本身，检索会退回关键词模式。
   }
+}
+
+/**
+ * 为存量文章补写向量（一次性/定时任务）。
+ * 未配置 embedding 服务时直接返回 0，不会扫描全表。
+ */
+export async function backfillKnowledgeEmbeddings(limit = 200): Promise<{ scanned: number, embedded: number }> {
+  if (!process.env.SMS_KB_EMBEDDING_ENDPOINT) return { scanned: 0, embedded: 0 }
+  const rows = await db.select({
+    id: smsKnowledgeArticles.id,
+    title: smsKnowledgeArticles.title,
+    content: smsKnowledgeArticles.content
+  }).from(smsKnowledgeArticles)
+    .where(isNull(smsKnowledgeArticles.embedding))
+    .limit(Math.min(Math.max(limit, 1), 500))
+
+  let embedded = 0
+  for (const row of rows) {
+    const vector = await embedKnowledgeText(`${row.title}\n${row.content}`)
+    if (!vector) continue
+    await db.update(smsKnowledgeArticles)
+      .set({ embedding: vector })
+      .where(eq(smsKnowledgeArticles.id, row.id))
+    embedded += 1
+  }
+  return { scanned: rows.length, embedded }
 }
 
 export const KNOWLEDGE_AUDIENCES = ['all', 'staff', 'student', 'guardian'] as const
@@ -166,6 +192,7 @@ export async function searchKnowledge(actor: SmsActor, options: KnowledgeQuery =
     content: smsKnowledgeArticles.content,
     tags: smsKnowledgeArticles.tags,
     audience: smsKnowledgeArticles.audience,
+    status: smsKnowledgeArticles.status,
     updatedAt: smsKnowledgeArticles.updatedAt,
     embedding: smsKnowledgeArticles.embedding
   }).from(smsKnowledgeArticles)
@@ -194,8 +221,11 @@ export async function searchKnowledge(actor: SmsActor, options: KnowledgeQuery =
     id: row.id,
     title: row.title,
     snippet: row.content.slice(0, 240),
+    // 管理端编辑需要正文；读者本来就只能看到自己可见的已发布文章。
+    content: row.content,
     tags: row.tags,
     audience: row.audience,
+    status: row.status,
     updatedAt: row.updatedAt,
     // 引用信息随结果返回，聊天回答可以注明“出自哪篇文章、何时更新”。
     citation: { id: row.id, title: row.title, updatedAt: row.updatedAt }

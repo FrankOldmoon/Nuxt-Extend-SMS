@@ -4,7 +4,7 @@
  * 重任务（学生/成绩导入、日报）可以入队，由 `sms:job-worker` 定时消费。
  * 队列只依赖 PostgreSQL，不引入额外中间件；失败按指数退避重试。
  */
-import { and, asc, eq, lte } from 'drizzle-orm'
+import { and, asc, eq, inArray, lte, sql } from 'drizzle-orm'
 import { createError } from 'h3'
 import { db } from '../../../server/sdk'
 import { smsBackgroundJobs } from './database/schema'
@@ -76,27 +76,61 @@ async function executeJob(kind: string, payload: Record<string, unknown>): Promi
   throw new Error(`Unsupported background job kind: ${kind}`)
 }
 
+/** 抢占租约：被领取的任务在租约内不会被其他副本重复领取。 */
+const JOB_LEASE_MS = 5 * 60_000
+
+type BackgroundJobRow = typeof smsBackgroundJobs.$inferSelect
+
+/**
+ * 在事务内用 `FOR UPDATE SKIP LOCKED` 抢占到期任务，并写短租约。
+ * 进程崩溃时租约过期后任务会被自动回收。
+ */
+async function claimJobs(limit: number, now: Date): Promise<BackgroundJobRow[]> {
+  return await db.transaction(async (tx) => {
+    // 回收租约过期的 running 任务（上一次 worker 异常退出）。
+    await tx.update(smsBackgroundJobs)
+      .set({ status: 'pending' })
+      .where(and(
+        eq(smsBackgroundJobs.status, 'running'),
+        lte(smsBackgroundJobs.nextAttemptAt, now)
+      ))
+
+    const claimed = await tx.execute(sql`
+      SELECT "id" FROM "sms_background_jobs"
+      WHERE "status" = 'pending' AND "next_attempt_at" <= ${now}
+      ORDER BY "next_attempt_at"
+      LIMIT ${limit}
+      FOR UPDATE SKIP LOCKED
+    `)
+    const ids = (claimed.rows as Array<{ id: number | string }>).map(row => Number(row.id))
+    if (ids.length === 0) return []
+
+    const lease = new Date(now.getTime() + JOB_LEASE_MS)
+    await tx.update(smsBackgroundJobs)
+      .set({
+        status: 'running',
+        attempts: sql`${smsBackgroundJobs.attempts} + 1`,
+        nextAttemptAt: lease
+      })
+      .where(inArray(smsBackgroundJobs.id, ids))
+
+    return await tx.select().from(smsBackgroundJobs)
+      .where(inArray(smsBackgroundJobs.id, ids))
+      .orderBy(asc(smsBackgroundJobs.nextAttemptAt))
+  })
+}
+
 /** 消费一批到期任务；单条失败不会阻塞后续任务。 */
 export async function runBackgroundJobs(
   limit = 10,
   now: Date = new Date()
 ): Promise<{ attempted: number, succeeded: number, retried: number, failed: number }> {
-  const rows = await db.select().from(smsBackgroundJobs)
-    .where(and(
-      eq(smsBackgroundJobs.status, 'pending'),
-      lte(smsBackgroundJobs.nextAttemptAt, now)
-    ))
-    .orderBy(asc(smsBackgroundJobs.nextAttemptAt))
-    .limit(limit)
+  const rows = await claimJobs(limit, now)
 
   let succeeded = 0
   let retried = 0
   let failed = 0
   for (const row of rows) {
-    const attempts = row.attempts + 1
-    await db.update(smsBackgroundJobs)
-      .set({ status: 'running', attempts })
-      .where(eq(smsBackgroundJobs.id, row.id))
     try {
       const result = await executeJob(row.kind, row.payload)
       await db.update(smsBackgroundJobs)
@@ -105,12 +139,12 @@ export async function runBackgroundJobs(
       succeeded += 1
     } catch (error) {
       const message = (error instanceof Error ? error.message : String(error)).slice(0, 500)
-      const exhausted = attempts >= row.maxAttempts
+      const exhausted = row.attempts >= row.maxAttempts
       await db.update(smsBackgroundJobs)
         .set({
           status: exhausted ? 'failed' : 'pending',
           lastError: message,
-          nextAttemptAt: new Date(now.getTime() + backgroundJobBackoffMs(attempts)),
+          nextAttemptAt: new Date(now.getTime() + backgroundJobBackoffMs(row.attempts)),
           finishedAt: exhausted ? now : null
         })
         .where(eq(smsBackgroundJobs.id, row.id))

@@ -8,7 +8,7 @@
  * Recipients are always resolved server-side: callers pass a student/class id,
  * never a list of user ids they merely "claim" to own.
  */
-import { and, desc, eq, inArray, isNull, lt, lte } from 'drizzle-orm'
+import { and, desc, eq, inArray, isNull, lt, sql } from 'drizzle-orm'
 import { createError } from 'h3'
 import { createHmac } from 'node:crypto'
 import { db, pool, writeAudit } from '../../../server/sdk'
@@ -213,6 +213,32 @@ export function outboxBackoffMs(attempts: number): number {
   return Math.min(60 * 60_000, 60_000 * 2 ** Math.max(0, attempts - 1))
 }
 
+/** 投递租约：领取后短时间内其他副本不会重复投递。 */
+const OUTBOX_LEASE_MS = 2 * 60_000
+
+type OutboxRow = typeof smsNotificationOutbox.$inferSelect
+
+/** 用 SKIP LOCKED 抢占到期行并写短租约，避免多副本重复投递。 */
+async function claimOutboxRows(limit: number, now: Date): Promise<OutboxRow[]> {
+  return await db.transaction(async (tx) => {
+    const claimed = await tx.execute(sql`
+      SELECT "id" FROM "sms_notification_outbox"
+      WHERE "status" = 'pending' AND "next_attempt_at" <= ${now}
+      ORDER BY "next_attempt_at"
+      LIMIT ${limit}
+      FOR UPDATE SKIP LOCKED
+    `)
+    const ids = (claimed.rows as Array<{ id: number | string }>).map(row => Number(row.id))
+    if (ids.length === 0) return []
+    await tx.update(smsNotificationOutbox)
+      .set({ nextAttemptAt: new Date(now.getTime() + OUTBOX_LEASE_MS) })
+      .where(inArray(smsNotificationOutbox.id, ids))
+    return await tx.select().from(smsNotificationOutbox)
+      .where(inArray(smsNotificationOutbox.id, ids))
+      .orderBy(smsNotificationOutbox.nextAttemptAt)
+  })
+}
+
 /**
  * 投递一批到期的 outbox 行。返回统计，供定时任务打印。
  * 单行失败不会中断整批。
@@ -221,13 +247,7 @@ export async function deliverNotificationOutboxBatch(
   limit = 50,
   now: Date = new Date()
 ): Promise<{ attempted: number, delivered: number, failed: number, retried: number }> {
-  const rows = await db.select().from(smsNotificationOutbox)
-    .where(and(
-      eq(smsNotificationOutbox.status, 'pending'),
-      lte(smsNotificationOutbox.nextAttemptAt, now)
-    ))
-    .orderBy(smsNotificationOutbox.nextAttemptAt)
-    .limit(limit)
+  const rows = await claimOutboxRows(limit, now)
 
   let delivered = 0
   let failed = 0

@@ -4,11 +4,12 @@
  * 站内信、Agent 事件流、评估指标与报告快照会随业务持续增长。
  * 定时任务按固定保留窗口清理，并写一条审计记录，便于追溯清理范围。
  */
-import { lt } from 'drizzle-orm'
+import { and, inArray, lt } from 'drizzle-orm'
 import { db, writeAudit } from '../../../server/sdk'
 import {
   smsAgentTaskEvents,
   smsEvaluationMetrics,
+  smsNotificationOutbox,
   smsNotifications,
   smsReportRuns
 } from './database/schema'
@@ -22,13 +23,16 @@ export interface RetentionPolicy {
   metricsDays: number
   /** 报表运行记录保留天数。 */
   reportRunsDays: number
+  /** 已投递/已失败 outbox 行保留天数。 */
+  outboxDays: number
 }
 
 export const DEFAULT_RETENTION: RetentionPolicy = {
   notificationsDays: 90,
   agentEventsDays: 180,
   metricsDays: 365,
-  reportRunsDays: 365
+  reportRunsDays: 365,
+  outboxDays: 30
 }
 
 export interface RetentionResult {
@@ -36,6 +40,7 @@ export interface RetentionResult {
   agentEvents: number
   evaluationMetrics: number
   reportRuns: number
+  outbox: number
 }
 
 function cutoff(now: Date, days: number): Date {
@@ -66,11 +71,20 @@ export async function runRetentionCleanup(
     .where(lt(smsReportRuns.generatedAt, cutoff(now, policy.reportRunsDays)))
     .returning({ id: smsReportRuns.id })
 
+  // 只清理已终结的 outbox 行；pending 行交给重试任务处理。
+  const deletedOutbox = await db.delete(smsNotificationOutbox)
+    .where(and(
+      inArray(smsNotificationOutbox.status, ['delivered', 'failed']),
+      lt(smsNotificationOutbox.createdAt, cutoff(now, policy.outboxDays))
+    ))
+    .returning({ id: smsNotificationOutbox.id })
+
   const result: RetentionResult = {
     notifications: deletedNotifications.length,
     agentEvents: deletedAgentEvents.length,
     evaluationMetrics: deletedMetrics.length,
-    reportRuns: deletedReportRuns.length
+    reportRuns: deletedReportRuns.length,
+    outbox: deletedOutbox.length
   }
 
   await writeAudit(db, {

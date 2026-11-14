@@ -113,7 +113,12 @@ async function submitLeave(): Promise<void> {
   }
   // 离线时先落本地队列，恢复网络后由 flushLeaveQueue 重放。
   if (import.meta.client && !navigator.onLine) {
-    writeLeaveQueue([...readLeaveQueue(), payload])
+    const queue = readLeaveQueue()
+    const signature = JSON.stringify(payload)
+    // 同一份申请重复点击只保留一条，避免恢复网络后重复提交。
+    if (!queue.some(item => JSON.stringify(item) === signature)) {
+      writeLeaveQueue([...queue, payload])
+    }
     leaveMessage.value = '当前离线，申请已暂存，恢复网络后自动提交。'
     leaveForm.reason = ''
     return
@@ -150,6 +155,13 @@ function writeLeaveQueue(items: Array<Record<string, unknown>>): void {
   }
 }
 
+/** 4xx（除超时/限流）视为永久失败：继续保留只会反复失败。 */
+function isPermanentFailure(error: unknown): boolean {
+  const status = (error as { statusCode?: number, status?: number } | null)?.statusCode
+    ?? (error as { status?: number } | null)?.status
+  return typeof status === 'number' && status >= 400 && status < 500 && status !== 408 && status !== 429
+}
+
 /** 恢复网络后按顺序补交；失败项保留在队列中等待下次重试。 */
 async function flushLeaveQueue(): Promise<void> {
   if (!import.meta.client || !navigator.onLine) return
@@ -159,8 +171,9 @@ async function flushLeaveQueue(): Promise<void> {
   for (const item of queue) {
     try {
       await $fetch('/api/modules/sms/leave', { method: 'POST', body: item })
-    } catch {
-      remaining.push(item)
+    } catch (error) {
+      // 400/403/409 通常是数据问题或重复提交，重试没有意义。
+      if (!isPermanentFailure(error)) remaining.push(item)
     }
   }
   writeLeaveQueue(remaining)

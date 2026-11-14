@@ -4,9 +4,11 @@ definePageMeta({ middleware: 'auth', layout: 'sms' })
 interface KnowledgeRow {
   id: number
   title: string
+  content: string
   snippet: string
   tags: string | null
   audience: string
+  status: string
   updatedAt: string
 }
 
@@ -27,6 +29,29 @@ const form = reactive({
   status: 'published'
 })
 const saving = ref(false)
+const editingId = ref<number | null>(null)
+const preview = ref(false)
+
+/** 进入编辑：把列表行回填到表单，并切到预览关闭状态。 */
+function startEdit(row: KnowledgeRow): void {
+  editingId.value = row.id
+  form.title = row.title
+  form.content = row.content
+  form.tags = row.tags ?? ''
+  form.audience = row.audience
+  form.status = row.status
+  preview.value = false
+}
+
+function resetForm(): void {
+  editingId.value = null
+  form.title = ''
+  form.content = ''
+  form.tags = ''
+  form.audience = 'all'
+  form.status = 'published'
+  preview.value = false
+}
 
 const audiences = [
   { label: '所有人', value: 'all' },
@@ -53,18 +78,25 @@ async function createArticle(): Promise<void> {
   saving.value = true
   error.value = ''
   message.value = ''
+  const editing = editingId.value !== null
   try {
-    await $fetch('/api/modules/sms/knowledge', {
-      method: 'POST',
-      body: { ...form }
-    })
-    message.value = '文章已创建'
-    form.title = ''
-    form.content = ''
-    form.tags = ''
+    if (editing) {
+      await $fetch('/api/modules/sms/knowledge/update', {
+        method: 'POST',
+        body: { articleId: editingId.value, ...form }
+      })
+      message.value = '文章已更新'
+    } else {
+      await $fetch('/api/modules/sms/knowledge', {
+        method: 'POST',
+        body: { ...form }
+      })
+      message.value = '文章已创建'
+    }
+    resetForm()
     await load()
   } catch (err) {
-    error.value = err instanceof Error ? err.message : '创建失败'
+    error.value = err instanceof Error ? err.message : (editing ? '更新失败' : '创建失败')
   } finally {
     saving.value = false
   }
@@ -124,11 +156,32 @@ onMounted(load)
       </p>
 
       <section class="space-y-3 rounded-xl border border-default bg-default p-4">
-        <h2 class="text-sm font-medium text-highlighted">
-          新建文章
-        </h2>
+        <div class="flex items-center justify-between">
+          <h2 class="text-sm font-medium text-highlighted">
+            {{ editingId === null ? '新建文章' : `编辑文章 #${editingId}` }}
+          </h2>
+          <UButton
+            v-if="editingId !== null"
+            size="xs"
+            variant="ghost"
+            @click="resetForm()"
+          >
+            取消编辑
+          </UButton>
+        </div>
         <UInput v-model="form.title" placeholder="标题" class="w-full" />
-        <UTextarea v-model="form.content" placeholder="正文" :rows="4" class="w-full" />
+        <div class="flex items-center justify-end">
+          <UButton size="xs" variant="ghost" @click="preview = !preview">
+            {{ preview ? '继续编辑' : '预览' }}
+          </UButton>
+        </div>
+        <div
+          v-if="preview"
+          class="min-h-24 whitespace-pre-wrap rounded-lg border border-default bg-elevated/40 p-3 text-sm text-toned"
+        >
+          {{ form.content || '（暂无内容）' }}
+        </div>
+        <UTextarea v-else v-model="form.content" placeholder="正文" :rows="6" class="w-full" />
         <div class="grid gap-2 sm:grid-cols-3">
           <UInput v-model="form.tags" placeholder="标签（逗号分隔）" />
           <USelect v-model="form.audience" :items="audiences" value-key="value" />
@@ -139,7 +192,7 @@ onMounted(load)
           />
         </div>
         <UButton :loading="saving" @click="createArticle()">
-          保存
+          {{ editingId === null ? '保存' : '更新' }}
         </UButton>
       </section>
 
@@ -171,6 +224,13 @@ onMounted(load)
                 </p>
               </div>
               <div class="flex items-center gap-2">
+                <UButton
+                  size="xs"
+                  variant="ghost"
+                  @click="startEdit(row)"
+                >
+                  编辑
+                </UButton>
                 <UButton
                   size="xs"
                   variant="ghost"

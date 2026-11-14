@@ -12,7 +12,9 @@ import { auditLogs } from '../../../server/database/schema'
 import {
   smsAgentTasks,
   smsApprovalTasks,
+  smsBackgroundJobs,
   smsKnowledgeArticles,
+  smsNotificationOutbox,
   smsNotifications
 } from './database/schema'
 import { canUseSms, isSmsAdmin, requireSmsOrganization, type SmsActor } from './context'
@@ -94,6 +96,8 @@ export interface SmsMetrics {
   imports: { batches: number }
   agents: { failed: number, running: number }
   knowledge: { published: number }
+  outbox: { pending: number, failed: number }
+  jobs: { pending: number, failed: number }
 }
 
 /**
@@ -110,7 +114,11 @@ export function formatPrometheusMetrics(metrics: SmsMetrics, organizationId?: nu
     ['sms_import_batches_total', 'Student import batches', metrics.imports.batches],
     ['sms_agent_tasks_failed', 'Failed agent tasks', metrics.agents.failed],
     ['sms_agent_tasks_running', 'Running agent tasks', metrics.agents.running],
-    ['sms_knowledge_articles_published', 'Published knowledge articles', metrics.knowledge.published]
+    ['sms_knowledge_articles_published', 'Published knowledge articles', metrics.knowledge.published],
+    ['sms_notification_outbox_pending', 'Pending external notification outbox rows', metrics.outbox.pending],
+    ['sms_notification_outbox_failed', 'Failed external notification outbox rows', metrics.outbox.failed],
+    ['sms_background_jobs_pending', 'Pending background jobs', metrics.jobs.pending],
+    ['sms_background_jobs_failed', 'Failed background jobs', metrics.jobs.failed]
   ]
   const output: string[] = []
   for (const [name, help, value] of lines) {
@@ -166,6 +174,18 @@ export async function buildSmsMetrics(actor: SmsActor): Promise<SmsMetrics> {
       eq(smsKnowledgeArticles.status, 'published')
     ))
 
+  const [outboxRow] = await db.select({
+    pending: sql<number>`count(*) filter (where ${smsNotificationOutbox.status} = 'pending')::int`,
+    failed: sql<number>`count(*) filter (where ${smsNotificationOutbox.status} = 'failed')::int`
+  }).from(smsNotificationOutbox)
+    .where(eq(smsNotificationOutbox.organizationId, organizationId))
+
+  const [jobRow] = await db.select({
+    pending: sql<number>`count(*) filter (where ${smsBackgroundJobs.status} in ('pending', 'running'))::int`,
+    failed: sql<number>`count(*) filter (where ${smsBackgroundJobs.status} = 'failed')::int`
+  }).from(smsBackgroundJobs)
+    .where(eq(smsBackgroundJobs.organizationId, organizationId))
+
   return {
     generatedAt: now.toISOString(),
     notifications: {
@@ -181,6 +201,14 @@ export async function buildSmsMetrics(actor: SmsActor): Promise<SmsMetrics> {
       failed: Number(agentRow?.failed ?? 0),
       running: Number(agentRow?.running ?? 0)
     },
-    knowledge: { published: Number(knowledgeRow?.total ?? 0) }
+    knowledge: { published: Number(knowledgeRow?.total ?? 0) },
+    outbox: {
+      pending: Number(outboxRow?.pending ?? 0),
+      failed: Number(outboxRow?.failed ?? 0)
+    },
+    jobs: {
+      pending: Number(jobRow?.pending ?? 0),
+      failed: Number(jobRow?.failed ?? 0)
+    }
   }
 }

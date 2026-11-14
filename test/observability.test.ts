@@ -7,7 +7,9 @@ const metrics: SmsMetrics = {
   approvals: { pending: 2, overdue: 1 },
   imports: { batches: 4 },
   agents: { failed: 1, running: 2 },
-  knowledge: { published: 5 }
+  knowledge: { published: 5 },
+  outbox: { pending: 4, failed: 1 },
+  jobs: { pending: 3, failed: 2 }
 }
 
 describe('formatPrometheusMetrics', () => {
@@ -15,6 +17,8 @@ describe('formatPrometheusMetrics', () => {
     const text = formatPrometheusMetrics(metrics, 7)
     expect(text).toContain('# TYPE sms_notifications_total gauge')
     expect(text).toContain('sms_notifications_total{organization_id="7"} 12')
+    expect(text).toContain('sms_notification_outbox_pending{organization_id="7"} 4')
+    expect(text).toContain('sms_background_jobs_failed{organization_id="7"} 2')
   })
 
   it('omits the label when no organization is given', () => {
