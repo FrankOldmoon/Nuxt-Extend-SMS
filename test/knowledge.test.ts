@@ -23,6 +23,7 @@ describe('SMS knowledge base rules', () => {
 
     expect(normalizeKnowledgeStatus(undefined)).toBe('published')
     expect(normalizeKnowledgeStatus('draft')).toBe('draft')
-    expect(() => normalizeKnowledgeStatus('archived')).toThrow()
+    expect(normalizeKnowledgeStatus('archived')).toBe('archived')
+    expect(() => normalizeKnowledgeStatus('deleted')).toThrow()
   })
 })

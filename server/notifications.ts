@@ -8,12 +8,13 @@
  * Recipients are always resolved server-side: callers pass a student/class id,
  * never a list of user ids they merely "claim" to own.
  */
-import { and, desc, eq, isNull } from 'drizzle-orm'
+import { and, desc, eq, inArray, isNull } from 'drizzle-orm'
 import { createError } from 'h3'
 import { db, pool, writeAudit } from '../../../server/sdk'
 import {
   smsClasses,
   smsGuardians,
+  smsNotificationPreferences,
   smsNotifications,
   smsStudentGuardians
 } from './database/schema'
@@ -81,9 +82,9 @@ export async function createNotifications(
   tx: Tx,
   input: NotificationInput
 ): Promise<number> {
-  const recipients = [...new Set(input.recipientUserIds)]
+  const requested = [...new Set(input.recipientUserIds)]
     .filter(id => Number.isSafeInteger(id) && id > 0)
-  if (recipients.length === 0) return 0
+  if (requested.length === 0) return 0
   const title = cleanText(input.title, 160)
   if (!title) return 0
   const body = cleanText(input.body, 1000)
@@ -92,6 +93,19 @@ export async function createNotifications(
   const entityId = Number.isSafeInteger(input.entityId) && Number(input.entityId) > 0
     ? Number(input.entityId)
     : null
+
+  // 免打扰：同一分类被该用户静音时不写站内信，避免事后过滤导致未读数抖动。
+  const muted = await tx.select({ userId: smsNotificationPreferences.userId })
+    .from(smsNotificationPreferences)
+    .where(and(
+      eq(smsNotificationPreferences.organizationId, input.organizationId),
+      eq(smsNotificationPreferences.category, input.category),
+      eq(smsNotificationPreferences.muted, true),
+      inArray(smsNotificationPreferences.userId, requested)
+    ))
+  const mutedUsers = new Set(muted.map(row => row.userId))
+  const recipients = requested.filter(id => !mutedUsers.has(id))
+  if (recipients.length === 0) return 0
 
   await tx.insert(smsNotifications).values(recipients.map(recipientUserId => ({
     organizationId: input.organizationId,
@@ -105,7 +119,47 @@ export async function createNotifications(
     entityId,
     status: 'unread' as const
   })))
+
+  // 站内信先落库，外部渠道异步投递且失败不影响业务事务。
+  void dispatchExternalNotification({
+    recipients,
+    category: input.category,
+    title,
+    body,
+    link
+  })
   return recipients.length
+}
+
+export interface ExternalNotificationPayload {
+  recipients: readonly number[]
+  category: NotificationCategory
+  title: string
+  body: string | null
+  link: string | null
+}
+
+/**
+ * 邮件/Webhook 适配器：未配置环境变量时完全 no-op；配置后失败只记录日志。
+ * 这样部署方无需改代码即可接入企业微信/邮件网关。
+ */
+export async function dispatchExternalNotification(payload: ExternalNotificationPayload): Promise<void> {
+  const webhook = process.env.SMS_NOTIFICATION_WEBHOOK_URL
+  const emailMode = process.env.SMS_NOTIFICATION_EMAIL_MODE
+  try {
+    if (webhook) {
+      await fetch(webhook, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(payload)
+      })
+    }
+    if (emailMode === 'log') {
+      console.info('[sms:notification:email]', payload)
+    }
+  } catch (error) {
+    console.warn('[sms:notification] external delivery failed', error instanceof Error ? error.message : error)
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -524,4 +578,74 @@ export async function notifyAttendanceAlerts(
     entityType: 'attendance',
     entityId: input.studentId
   })
+}
+
+// ---------------------------------------------------------------------------
+// Personal preferences (per-user, per-category mute)
+// ---------------------------------------------------------------------------
+
+export interface NotificationPreference {
+  category: NotificationCategory
+  muted: boolean
+}
+
+/** 返回全部分类（默认未静音），前端无需自行补齐缺失分类。 */
+export async function getNotificationPreferences(actor: SmsActor): Promise<NotificationPreference[]> {
+  const organizationId = requireNotificationRead(actor)
+  const rows = await db.select({
+    category: smsNotificationPreferences.category,
+    muted: smsNotificationPreferences.muted
+  }).from(smsNotificationPreferences)
+    .where(and(
+      eq(smsNotificationPreferences.organizationId, organizationId),
+      eq(smsNotificationPreferences.userId, actor.userId)
+    ))
+  const stored = new Map(rows.map(row => [row.category, row.muted]))
+  return NOTIFICATION_CATEGORIES.map(category => ({
+    category,
+    muted: stored.get(category) ?? false
+  }))
+}
+
+export interface UpdateNotificationPreferencesInput {
+  preferences?: unknown
+}
+
+export async function updateNotificationPreferences(
+  actor: SmsActor,
+  input: UpdateNotificationPreferencesInput
+): Promise<NotificationPreference[]> {
+  const organizationId = requireNotificationRead(actor)
+  const entries = Array.isArray(input.preferences) ? input.preferences : []
+  if (entries.length === 0) {
+    throw createError({ statusCode: 400, message: 'preferences 必须是非空数组' })
+  }
+  const normalized = entries.map((entry) => {
+    if (typeof entry !== 'object' || entry === null || Array.isArray(entry)) {
+      throw createError({ statusCode: 400, message: 'preferences 每项必须是对象' })
+    }
+    const row = entry as Record<string, unknown>
+    return {
+      category: normalizeNotificationCategory(row.category),
+      muted: row.muted === true
+    }
+  })
+  const unique = new Map(normalized.map(item => [item.category, item.muted]))
+
+  for (const [category, muted] of unique) {
+    await db.insert(smsNotificationPreferences).values({
+      organizationId,
+      userId: actor.userId,
+      category,
+      muted
+    }).onConflictDoUpdate({
+      target: [
+        smsNotificationPreferences.organizationId,
+        smsNotificationPreferences.userId,
+        smsNotificationPreferences.category
+      ],
+      set: { muted, updatedAt: new Date() }
+    })
+  }
+  return await getNotificationPreferences(actor)
 }

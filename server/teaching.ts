@@ -5,7 +5,7 @@
  * staff are limited to their assigned / homeroom classes unless they hold a
  * school-wide scope flag.
  */
-import { and, desc, eq, inArray, isNull } from 'drizzle-orm'
+import { and, desc, eq, inArray, isNull, sql } from 'drizzle-orm'
 import { createError } from 'h3'
 import { db, writeAudit } from '../../../server/sdk'
 import {
@@ -13,7 +13,8 @@ import {
   smsAssignmentSubmissions,
   smsClasses,
   smsCourseElections,
-  smsStudents
+  smsStudents,
+  smsSubjects
 } from './database/schema'
 import { assertSubjectInContext, assertTermInContext } from './academics'
 import { assertClassInContext, assignedClassIds } from './students'
@@ -112,6 +113,35 @@ export interface CreateAssignmentInput {
   description?: unknown
   dueAt?: unknown
   status?: unknown
+  /** 评分标准，例如 { criteria: [{ name: '完整性', weight: 0.4 }] }。 */
+  rubric?: unknown
+}
+
+/** 只接受结构化评分标准，避免把任意大对象写入数据库。 */
+function normalizeRubric(value: unknown): Record<string, unknown> | null {
+  if (value === undefined || value === null) return null
+  if (typeof value !== 'object' || Array.isArray(value)) {
+    throw createError({ statusCode: 400, message: 'rubric 必须是对象' })
+  }
+  const criteria = (value as Record<string, unknown>).criteria
+  if (!Array.isArray(criteria) || criteria.length === 0 || criteria.length > 20) {
+    throw createError({ statusCode: 400, message: 'rubric.criteria 必须是 1-20 条的数组' })
+  }
+  return {
+    criteria: criteria.map((item) => {
+      if (typeof item !== 'object' || item === null || Array.isArray(item)) {
+        throw createError({ statusCode: 400, message: 'rubric.criteria 每项必须是对象' })
+      }
+      const row = item as Record<string, unknown>
+      const name = typeof row.name === 'string' ? row.name.trim().slice(0, 80) : ''
+      const weight = Number(row.weight)
+      if (!name) throw createError({ statusCode: 400, message: 'rubric 评分项名称不能为空' })
+      if (!Number.isFinite(weight) || weight <= 0 || weight > 100) {
+        throw createError({ statusCode: 400, message: 'rubric 权重必须在 0-100 之间' })
+      }
+      return { name, weight }
+    })
+  }
 }
 
 export async function createAssignment(actor: SmsActor, input: CreateAssignmentInput) {
@@ -122,6 +152,14 @@ export async function createAssignment(actor: SmsActor, input: CreateAssignmentI
   if (!title) throw createError({ statusCode: 400, message: 'title 不能为空' })
   await assertClassInContext(actor, classId)
   await assertSubjectInContext(actor, subjectId)
+  // 组织内存在不等于“我教的班”：非全校范围角色必须是任课/班主任班级。
+  if (!hasSchoolWide(actor)) {
+    const classIds = await teachingClassIds(actor)
+    if (!classIds.includes(classId)) {
+      throw createError({ statusCode: 403, statusMessage: 'Forbidden', message: 'Assignment is outside your classes' })
+    }
+  }
+  const rubric = normalizeRubric(input.rubric)
 
   const description = typeof input.description === 'string' ? input.description.trim().slice(0, 20_000) : null
   const status = normalizeAssignmentStatus(input.status)
@@ -142,6 +180,7 @@ export async function createAssignment(actor: SmsActor, input: CreateAssignmentI
       description,
       dueAt,
       status,
+      rubric,
       createdBy: actor.userId
     }).returning()
     if (!row) throw createError({ statusCode: 500, message: 'Failed to create assignment' })
@@ -153,7 +192,7 @@ export async function createAssignment(actor: SmsActor, input: CreateAssignmentI
       action: 'assignment.create',
       resource: 'assignments',
       recordId: row.id,
-      after: { title, classId, subjectId, status },
+      after: { title, classId, subjectId, status, hasRubric: Boolean(rubric) },
       source: 'sms-service'
     })
     return row
@@ -210,6 +249,21 @@ export async function listAssignments(actor: SmsActor, options: ListAssignmentQu
 export interface SubmitAssignmentInput {
   assignmentId?: unknown
   content?: unknown
+  /** 附件地址：站内路径或 http(s) URL；不接收任意协议。 */
+  attachmentUrl?: unknown
+}
+
+function normalizeAttachmentUrl(value: unknown): string | null {
+  if (value === undefined || value === null || value === '') return null
+  if (typeof value !== 'string') throw createError({ statusCode: 400, message: 'attachmentUrl 必须是字符串' })
+  const url = value.trim().slice(0, 500)
+  if (!url) return null
+  const isInternal = url.startsWith('/') && !url.startsWith('//')
+  const isHttp = /^https?:\/\//i.test(url)
+  if (!isInternal && !isHttp) {
+    throw createError({ statusCode: 400, message: 'attachmentUrl 只允许站内路径或 http(s) 地址' })
+  }
+  return url
 }
 
 export async function submitAssignment(actor: SmsActor, input: SubmitAssignmentInput) {
@@ -238,6 +292,7 @@ export async function submitAssignment(actor: SmsActor, input: SubmitAssignmentI
     throw createError({ statusCode: 403, statusMessage: 'Forbidden', message: 'Assignment is not for your class' })
   }
   const content = typeof input.content === 'string' ? input.content.trim().slice(0, 50_000) : null
+  const attachmentUrl = normalizeAttachmentUrl(input.attachmentUrl)
 
   return await db.transaction(async (tx) => {
     const [row] = await tx.insert(smsAssignmentSubmissions).values({
@@ -246,6 +301,7 @@ export async function submitAssignment(actor: SmsActor, input: SubmitAssignmentI
       assignmentId,
       studentId: student.id,
       content,
+      attachmentUrl,
       status: 'submitted',
       submittedAt: new Date()
     }).onConflictDoUpdate({
@@ -254,7 +310,7 @@ export async function submitAssignment(actor: SmsActor, input: SubmitAssignmentI
         smsAssignmentSubmissions.assignmentId,
         smsAssignmentSubmissions.studentId
       ],
-      set: { content, status: 'submitted', submittedAt: new Date() }
+      set: { content, attachmentUrl, status: 'submitted', submittedAt: new Date() }
     }).returning()
     await writeAudit(tx, {
       actorUserId: actor.userId,
@@ -403,6 +459,36 @@ export async function setCourseElection(actor: SmsActor, input: SetElectionInput
   await assertSubjectInContext(actor, subjectId)
   await assertTermInContext(actor, termId)
   const student = await resolveStudent(actor)
+
+  // 选课容量：仅对“新选”生效，已在课或退课不受影响。
+  if (action === 'elect') {
+    const [subject] = await db.select({ capacity: smsSubjects.capacity }).from(smsSubjects)
+      .where(and(eq(smsSubjects.id, subjectId), eq(smsSubjects.organizationId, organizationId)))
+      .limit(1)
+    if (!subject) throw createError({ statusCode: 404, message: 'Subject not found' })
+    if (subject.capacity !== null) {
+      const [current] = await db.select({ status: smsCourseElections.status }).from(smsCourseElections)
+        .where(and(
+          eq(smsCourseElections.organizationId, organizationId),
+          eq(smsCourseElections.studentId, student.id),
+          eq(smsCourseElections.subjectId, subjectId),
+          eq(smsCourseElections.termId, termId)
+        ))
+        .limit(1)
+      if (current?.status !== 'selected') {
+        const [counted] = await db.select({ value: sql<number>`count(*)::int` }).from(smsCourseElections)
+          .where(and(
+            eq(smsCourseElections.organizationId, organizationId),
+            eq(smsCourseElections.subjectId, subjectId),
+            eq(smsCourseElections.termId, termId),
+            eq(smsCourseElections.status, 'selected')
+          ))
+        if (Number(counted?.value ?? 0) >= subject.capacity) {
+          throw createError({ statusCode: 409, message: '课程容量已满' })
+        }
+      }
+    }
+  }
 
   return await db.transaction(async (tx) => {
     const [row] = await tx.insert(smsCourseElections).values({

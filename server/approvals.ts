@@ -9,10 +9,16 @@
  * Escalation is monotonic: homeroom → grade_leader → school_admin. A task is
  * escalated at most once, then gets a fresh SLA window.
  */
-import { and, asc, eq, isNull, lte } from 'drizzle-orm'
-import { db, writeAudit } from '../../../server/sdk'
-import { smsApprovalTasks } from './database/schema'
+import { and, asc, eq, inArray, isNull, lte, or } from 'drizzle-orm'
+import { createError } from 'h3'
+import { db, pool, writeAudit } from '../../../server/sdk'
+import {
+  smsApprovalTasks,
+  smsLeaveRequests,
+  smsRefunds
+} from './database/schema'
 import { createNotifications, resolvePermissionRecipients } from './notifications'
+import { isSmsAdmin, requireSmsOrganization, type SmsActor } from './context'
 
 export const APPROVAL_SLA_HOURS = 48
 export const APPROVAL_SUBJECT_TYPES = ['leave', 'refund'] as const
@@ -226,4 +232,216 @@ export async function escalateOverdueApprovals(now: Date = new Date()): Promise<
   }
 
   return { scanned: overdue.length, escalated, notified }
+}
+
+// ---------------------------------------------------------------------------
+// 统一审批收件箱（P1）
+// ---------------------------------------------------------------------------
+
+export interface ApprovalInboxItem {
+  kind: ApprovalSubjectType
+  taskId: number | null
+  subjectId: number
+  step: number
+  title: string
+  assigneeUserId: number | null
+  dueAt: string | null
+  overdue: boolean
+  link: string
+}
+
+export interface ApprovalInboxQuery {
+  kind?: unknown
+  limit?: unknown
+}
+
+function hasSchoolWide(actor: SmsActor): boolean {
+  return isSmsAdmin(actor) || (actor.permissions ?? []).includes('sms.leave.all')
+}
+
+function canApproveKind(actor: SmsActor, kind: ApprovalSubjectType): boolean {
+  if (isSmsAdmin(actor)) return true
+  const permission = ESCALATION_PERMISSION[kind]
+  return (actor.permissions ?? []).includes(permission)
+}
+
+/**
+ * 收件箱 = 待办审批步骤 + 尚未生成步骤的待审批退费（兼容旧数据）。
+ * 行范围与审批权限一致，返回统一的 DTO，前端/聊天无需分别查询请假与退费。
+ */
+export async function listApprovalInbox(
+  actor: SmsActor,
+  options: ApprovalInboxQuery = {}
+): Promise<ApprovalInboxItem[]> {
+  const organizationId = requireSmsOrganization(actor)
+  const kind = options.kind === 'leave' || options.kind === 'refund' ? options.kind : null
+  const limit = Math.min(Math.max(Math.floor(Number(options.limit ?? 50) || 50), 1), 200)
+  const now = new Date()
+
+  const conditions = [
+    eq(smsApprovalTasks.organizationId, organizationId),
+    eq(smsApprovalTasks.status, 'pending')
+  ]
+  if (kind) conditions.push(eq(smsApprovalTasks.subjectType, kind))
+  if (!hasSchoolWide(actor)) {
+    const approvable = (['leave', 'refund'] as const).filter(item => canApproveKind(actor, item))
+    if (approvable.length === 0) return []
+    const scope = approvable.map(item => (item === 'refund'
+      ? and(eq(smsApprovalTasks.subjectType, 'refund'), isNull(smsApprovalTasks.assigneeUserId))
+      : and(eq(smsApprovalTasks.subjectType, 'leave'), or(
+          eq(smsApprovalTasks.assigneeUserId, actor.userId),
+          isNull(smsApprovalTasks.assigneeUserId)
+        ))))
+    const scoped = or(...scope)
+    if (scoped) conditions.push(scoped)
+  }
+
+  const tasks = await db.select().from(smsApprovalTasks)
+    .where(and(...conditions))
+    .orderBy(asc(smsApprovalTasks.dueAt))
+    .limit(limit)
+
+  const leaveIds = tasks.filter(task => task.subjectType === 'leave').map(task => task.subjectId)
+  const refundIds = tasks.filter(task => task.subjectType === 'refund').map(task => task.subjectId)
+  const [leaves, refunds] = await Promise.all([
+    leaveIds.length
+      ? db.select({ id: smsLeaveRequests.id, type: smsLeaveRequests.type, startAt: smsLeaveRequests.startAt })
+          .from(smsLeaveRequests)
+          .where(and(eq(smsLeaveRequests.organizationId, organizationId), inArray(smsLeaveRequests.id, leaveIds)))
+      : Promise.resolve([]),
+    refundIds.length
+      ? db.select({ id: smsRefunds.id, amount: smsRefunds.amount })
+          .from(smsRefunds)
+          .where(and(eq(smsRefunds.organizationId, organizationId), inArray(smsRefunds.id, refundIds)))
+      : Promise.resolve([])
+  ])
+  const leaveById = new Map(leaves.map(row => [row.id, row]))
+  const refundById = new Map(refunds.map(row => [row.id, row]))
+
+  const items: ApprovalInboxItem[] = tasks.map((task) => {
+    const subjectType: ApprovalSubjectType = task.subjectType === 'refund' ? 'refund' : 'leave'
+    const leave = leaveById.get(task.subjectId)
+    const refund = refundById.get(task.subjectId)
+    const title = subjectType === 'leave'
+      ? `请假审批（${leave?.type ?? 'leave'}，${leave?.startAt ? new Date(leave.startAt).toISOString().slice(0, 10) : '—'}）`
+      : `退费审批（${Number(refund?.amount ?? 0).toFixed(2)} 元）`
+    return {
+      kind: subjectType,
+      taskId: task.id,
+      subjectId: task.subjectId,
+      step: task.step,
+      title,
+      assigneeUserId: task.assigneeUserId,
+      dueAt: task.dueAt ? task.dueAt.toISOString() : null,
+      overdue: Boolean(task.dueAt && task.dueAt.getTime() < now.getTime()),
+      link: '/sms/approvals'
+    }
+  })
+  if (kind === 'leave') return items.slice(0, limit)
+  return await appendOrphanRefunds(items, actor, organizationId, refundIds, limit)
+}
+
+/** 合并「有审批步骤的任务」与「历史遗留、无步骤的待审批退费」。 */
+async function appendOrphanRefunds(
+  items: ApprovalInboxItem[],
+  actor: SmsActor,
+  organizationId: number,
+  refundIds: number[],
+  limit: number
+): Promise<ApprovalInboxItem[]> {
+  if (!canApproveKind(actor, 'refund')) return items
+  const withTasks = new Set(refundIds)
+  const pending = await db.select({ id: smsRefunds.id, amount: smsRefunds.amount })
+    .from(smsRefunds)
+    .where(and(
+      eq(smsRefunds.organizationId, organizationId),
+      eq(smsRefunds.status, 'pending')
+    ))
+    .limit(limit)
+  for (const row of pending) {
+    if (withTasks.has(row.id)) continue
+    items.push({
+      kind: 'refund',
+      taskId: null,
+      subjectId: row.id,
+      step: 0,
+      title: `退费审批（${Number(row.amount).toFixed(2)} 元）`,
+      assigneeUserId: null,
+      dueAt: null,
+      overdue: false,
+      link: '/sms/approvals'
+    })
+  }
+  return items.slice(0, limit)
+}
+
+export interface ReassignApprovalInput {
+  taskId?: unknown
+  assigneeUserId?: unknown
+}
+
+/** 转交审批：仅持有对应审批权限的人可操作，转交后重置 SLA。 */
+export async function reassignApprovalTask(actor: SmsActor, input: ReassignApprovalInput) {
+  const organizationId = requireSmsOrganization(actor)
+  const taskId = Number(input.taskId)
+  const assigneeUserId = Number(input.assigneeUserId)
+  if (!Number.isSafeInteger(taskId) || taskId <= 0) {
+    throw createError({ statusCode: 400, message: 'taskId 必须是正整数' })
+  }
+  if (!Number.isSafeInteger(assigneeUserId) || assigneeUserId <= 0) {
+    throw createError({ statusCode: 400, message: 'assigneeUserId 必须是正整数' })
+  }
+  const [task] = await db.select().from(smsApprovalTasks)
+    .where(and(
+      eq(smsApprovalTasks.id, taskId),
+      eq(smsApprovalTasks.organizationId, organizationId),
+      eq(smsApprovalTasks.status, 'pending')
+    ))
+    .limit(1)
+  if (!task) throw createError({ statusCode: 404, message: 'Approval task not found' })
+  const kind: ApprovalSubjectType = task.subjectType === 'refund' ? 'refund' : 'leave'
+  if (!canApproveKind(actor, kind)) {
+    throw createError({ statusCode: 403, statusMessage: 'Forbidden', message: 'No permission to reassign this approval' })
+  }
+
+  const { rows } = await pool.query<{ user_id: number }>(
+    `SELECT user_id FROM organization_memberships
+      WHERE organization_id = $1 AND status = 'active' AND user_id = $2`,
+    [organizationId, assigneeUserId]
+  )
+  if (rows.length === 0) {
+    throw createError({ statusCode: 400, message: 'assigneeUserId 不是当前组织的有效成员' })
+  }
+
+  const dueAt = approvalDueAt(new Date())
+  return await db.transaction(async (tx) => {
+    const [row] = await tx.update(smsApprovalTasks)
+      .set({ assigneeUserId, assigneeRole: null, dueAt, escalatedAt: null })
+      .where(eq(smsApprovalTasks.id, taskId))
+      .returning()
+    await createNotifications(tx, {
+      organizationId,
+      tenantId: task.tenantId,
+      recipientUserIds: [assigneeUserId],
+      category: 'approval',
+      title: `审批已转交：${kind === 'leave' ? '请假' : '退费'}`,
+      body: '有审批任务转交给你，请在 SLA 内处理。',
+      link: '/sms/approvals',
+      entityType: kind,
+      entityId: task.subjectId
+    })
+    await writeAudit(tx, {
+      actorUserId: actor.userId,
+      tenantId: actor.tenantId ?? undefined,
+      organizationId,
+      moduleId: 'sms',
+      action: 'approval.reassign',
+      resource: 'approvals',
+      recordId: taskId,
+      before: { assigneeUserId: task.assigneeUserId },
+      after: { assigneeUserId, dueAt: dueAt.toISOString() },
+      source: 'sms-service'
+    })
+    return row ?? null
+  })
 }

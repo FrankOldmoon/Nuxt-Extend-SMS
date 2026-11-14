@@ -1,7 +1,7 @@
 // Phase 5 acceptance: SMS is an independent module that uses Core permission,
 // data scope, Generic CRUD, Tool Registry and UI Registry without Core changes.
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
-import { pool } from '../../../server/database'
+import { db, pool } from '../../../server/database'
 import { applyModuleMigrations } from '../../../server/database/moduleMigrations'
 import { smsModule } from '../module'
 import { getRegisteredTable, getTableMeta } from '../../../server/utils/dashboard/tables'
@@ -14,7 +14,6 @@ import type { SmsActor } from '../server/context'
 import { createNotifications, listNotifications, markNotificationRead } from '../server/notifications'
 import { findLeaveRequest } from '../server/leave'
 import { approveRefund } from '../server/finance'
-import { db } from '../../../server/database'
 import { smsLeaveRequests, smsRefunds } from '../server/database/schema'
 
 describe('SMS demo module (database)', () => {

@@ -56,7 +56,7 @@ describe('SMS role presets', () => {
   it('evaluates every role × capability pair', () => {
     // Guards the matrix itself: a new role or capability must be covered here.
     expect(SMS_ROLE_PRESETS).toHaveLength(16)
-    expect(smsCapabilities).toHaveLength(76)
+    expect(smsCapabilities).toHaveLength(81)
 
     let allowed = 0
     let denied = 0
@@ -66,7 +66,7 @@ describe('SMS role presets', () => {
         else denied += 1
       }
     }
-    expect(allowed + denied).toBe(16 * 76)
+    expect(allowed + denied).toBe(16 * 81)
     expect(allowed).toBeGreaterThan(0)
     expect(denied).toBeGreaterThan(0)
   })

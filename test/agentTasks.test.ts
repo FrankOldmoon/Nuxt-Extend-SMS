@@ -17,6 +17,7 @@ describe('agent task state machine', () => {
     expect(nextAgentTaskStatus('done', 'start')).toBeNull()
     expect(nextAgentTaskStatus('cancelled', 'resume')).toBeNull()
     expect(nextAgentTaskStatus('pending', 'complete')).toBeNull()
+    expect(nextAgentTaskStatus('failed', 'retry')).toBe('pending')
   })
 
   it('normalises task status filters', () => {
@@ -28,11 +29,16 @@ describe('agent task state machine', () => {
   })
 
   it('declares only supported events', () => {
-    expect(AGENT_TASK_EVENTS).toEqual(['start', 'wait', 'resume', 'complete', 'fail', 'cancel'])
+    expect(AGENT_TASK_EVENTS).toEqual(['start', 'wait', 'resume', 'complete', 'fail', 'cancel', 'retry'])
   })
 })
 
 describe('capability selection golden set', () => {
+  it('covers 30 representative prompts', () => {
+    expect(SMS_GOLDEN_CASES).toHaveLength(30)
+    expect(new Set(SMS_GOLDEN_CASES.map(item => item.id)).size).toBe(SMS_GOLDEN_CASES.length)
+  })
+
   it('maps every golden prompt to existing capabilities', () => {
     const byId = new Map(smsCapabilities.map(capability => [capability.id, capability]))
     for (const golden of SMS_GOLDEN_CASES) {

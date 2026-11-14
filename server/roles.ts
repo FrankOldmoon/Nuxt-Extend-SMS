@@ -47,7 +47,8 @@ const ALL_READ = [
   'sms.finance.read',
   'sms.assets.read',
   'sms.library.read',
-  'sms.reports.read'
+  'sms.reports.read',
+  'sms.audit.read'
 ] as const
 
 /** Whole-school data-scope flags (never grants publish/write by themselves). */

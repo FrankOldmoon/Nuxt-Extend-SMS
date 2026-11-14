@@ -55,7 +55,6 @@ import {
   canApproveLeave,
   decideLeave,
   findLeaveRequest,
-  listApprovalTasks,
   listLeaveRequests,
   normalizeLeaveWindow
 } from './leave'
@@ -137,15 +136,19 @@ import {
   sendNotification,
   unreadNotificationCount
 } from './notifications'
-import { createKnowledgeArticle, searchKnowledge } from './knowledge'
-import { IMPORT_MAX_ROWS, importStudentsCsv, parseCsv } from './imports'
+import { createKnowledgeArticle, searchKnowledge, updateKnowledgeArticle } from './knowledge'
+import { IMPORT_MAX_ROWS, importScoresCsv, importStudentsCsv, parseCsv } from './imports'
 import { listDailyReport } from './reportDaily'
 import {
   AGENT_TASK_EVENTS,
   advanceAgentTask,
   createAgentTask,
+  listAgentTaskEvents,
   listAgentTasks
 } from './agentTasks'
+import { listEvaluationMetrics } from './evaluation'
+import { queryAuditLogs } from './observability'
+import { listApprovalInbox } from './approvals'
 import {
   createAssignment,
   gradeSubmission,
@@ -1444,7 +1447,7 @@ const leaveList: Capability = {
 const approvalsList: Capability = {
   id: 'sms.approvals.list',
   title: '待办审批',
-  description: '列出分配给当前用户的业务审批（默认待审批）',
+  description: '统一审批收件箱：请假与退费待办、SLA 超时标记，按权限与数据范围过滤',
   resource: 'approvals',
   moduleId: 'sms',
   operation: 'query',
@@ -1457,25 +1460,22 @@ const approvalsList: Capability = {
   inputJsonSchema: {
     type: 'object',
     properties: {
-      status: { type: 'string', enum: ['pending', 'approved', 'rejected', 'cancelled'] },
+      kind: { type: 'string', enum: ['leave', 'refund'] },
       limit: { type: 'integer', minimum: 1, maximum: 200 }
     },
     additionalProperties: false
   },
   authorize: actor => read(actor, 'leave') || read(actor, 'approvals'),
-  execute: (input, actor) => listApprovalTasks(actor, isRecord(input) ? input : {}),
+  execute: (input, actor) => listApprovalInbox(actor, isRecord(input) ? input : {}),
   summarize: rows => listSummary('待办审批', rows),
   resultView: {
     kind: 'table',
     columns: [
+      { key: 'kind', label: '类型' },
+      { key: 'title', label: '标题' },
       { key: 'step', label: '步骤', format: 'number' },
-      { key: 'studentName', label: '学生' },
-      { key: 'className', label: '班级' },
-      { key: 'type', label: '类型' },
-      { key: 'startAt', label: '开始', format: 'datetime' },
-      { key: 'endAt', label: '结束', format: 'datetime' },
-      { key: 'days', label: '天数', format: 'number' },
-      { key: 'leaveStatus', label: '请假状态' }
+      { key: 'dueAt', label: '截止', format: 'datetime' },
+      { key: 'overdue', label: '是否超时', format: 'boolean' }
     ]
   }
 }
@@ -3825,6 +3825,238 @@ const knowledgeCreate: Capability = {
   }
 }
 
+const knowledgeUpdate: Capability = {
+  id: 'sms.knowledge.update',
+  title: '编辑或下架知识条目',
+  description: '修改校规知识条目内容，或下架（archived）不再展示；保留引用记录',
+  resource: 'knowledge',
+  moduleId: 'sms',
+  operation: 'command',
+  riskLevel: 'medium',
+  permission: 'sms.knowledge.create',
+  approval: 'confirm',
+  timeoutMs: TIMEOUT_MS,
+  rateLimit: { max: 20, windowMs: 60_000 },
+  schema: isRecord,
+  inputJsonSchema: {
+    type: 'object',
+    properties: {
+      articleId: { type: 'integer', minimum: 1 },
+      title: { type: 'string' },
+      content: { type: 'string' },
+      tags: { type: 'string' },
+      audience: { type: 'string', enum: ['all', 'staff', 'student', 'guardian'] },
+      status: { type: 'string', enum: ['published', 'draft', 'archived'] },
+      action: { type: 'string', enum: ['update', 'archive'] }
+    },
+    required: ['articleId'],
+    additionalProperties: false
+  },
+  form: {
+    fields: [
+      { key: 'articleId', label: '文章 ID', type: 'number', required: true },
+      { key: 'title', label: '标题', type: 'text' },
+      { key: 'content', label: '正文', type: 'textarea' },
+      { key: 'tags', label: '标签', type: 'text' },
+      { key: 'audience', label: '可见范围', type: 'select' },
+      { key: 'status', label: '状态', type: 'select' },
+      { key: 'action', label: '操作', type: 'select', help: 'archive 表示下架' }
+    ],
+    submitLabel: '保存修改',
+    layout: 'single-column'
+  },
+  authorize: actor => isSmsAdmin(actor) || (actor.permissions ?? []).includes('sms.knowledge.create'),
+  preview: (input): PreviewResult => {
+    const args = isRecord(input) ? input : {}
+    return {
+      summary: args.action === 'archive'
+        ? `将下架知识条目 #${String(args.articleId ?? '')}。`
+        : `将更新知识条目 #${String(args.articleId ?? '')}。`,
+      details: { articleId: args.articleId, action: args.action, status: args.status },
+      impact: 1,
+      warnings: args.action === 'archive' ? ['下架后检索与聊天引用将不再返回该条目。'] : undefined
+    }
+  },
+  execute: (input, actor) => updateKnowledgeArticle(actor, isRecord(input) ? input : {}),
+  summarize: (value) => {
+    const row = isRecord(value) ? value : {}
+    return row.status === 'archived' ? '知识条目已下架' : '知识条目已更新'
+  }
+}
+
+const scoresImport: Capability = {
+  id: 'sms.scores.import',
+  title: '批量导入成绩',
+  description: '通过 CSV（studentNo,score）为草稿考试批量录入成绩，返回逐行校验报告',
+  resource: 'scores',
+  moduleId: 'sms',
+  operation: 'command',
+  riskLevel: 'high',
+  permission: 'sms.scores.update',
+  approval: 'confirm',
+  requiresApproval: true,
+  timeoutMs: 60_000,
+  rateLimit: { max: 5, windowMs: 60_000 },
+  schema: isRecord,
+  inputJsonSchema: {
+    type: 'object',
+    properties: {
+      examId: { type: 'integer', minimum: 1 },
+      csv: { type: 'string', description: '表头需包含 studentNo, score' },
+      dryRun: { type: 'boolean' },
+      reason: { type: 'string' }
+    },
+    required: ['examId', 'csv'],
+    additionalProperties: false
+  },
+  form: {
+    fields: [
+      { key: 'examId', label: '考试 ID', type: 'number', required: true },
+      {
+        key: 'csv',
+        label: 'CSV 内容',
+        type: 'textarea',
+        required: true,
+        help: `表头：studentNo,score；单次最多 ${IMPORT_MAX_ROWS} 行`
+      },
+      { key: 'dryRun', label: '仅校验', type: 'boolean' },
+      { key: 'reason', label: '修订原因', type: 'text' }
+    ],
+    submitLabel: '开始导入',
+    layout: 'single-column'
+  },
+  authorize: actor => write(actor, 'update', 'scores'),
+  preview: (input): PreviewResult => {
+    const args = isRecord(input) ? input : {}
+    const csv = typeof args.csv === 'string' ? args.csv : ''
+    const dataRows = Math.max(parseCsv(csv).length - 1, 0)
+    return {
+      summary: args.dryRun === true
+        ? `将校验 ${dataRows} 行成绩（不写入）。`
+        : `将向考试 #${String(args.examId ?? '')} 导入最多 ${dataRows} 行成绩。`,
+      details: { examId: args.examId, rows: dataRows, dryRun: args.dryRun === true },
+      impact: dataRows,
+      warnings: dataRows > IMPORT_MAX_ROWS ? [`超过单次上限 ${IMPORT_MAX_ROWS} 行，将被拒绝。`] : undefined
+    }
+  },
+  execute: (input, actor) => importScoresCsv(actor, isRecord(input) ? input : {}),
+  summarize: (value) => {
+    const row = isRecord(value) ? value : {}
+    return `成绩导入完成：成功 ${row.imported ?? 0} 行，失败 ${row.invalid ?? 0} 行`
+  }
+}
+
+const agentTasksEvents: Capability = {
+  id: 'sms.agent-tasks.events',
+  title: 'Agent 任务事件',
+  description: '查看某个 Agent 任务的状态推进事件流，用于回放与排障',
+  resource: 'agent-tasks',
+  moduleId: 'sms',
+  operation: 'query',
+  riskLevel: 'low',
+  permission: 'sms.agent-tasks.read',
+  approval: 'none',
+  timeoutMs: TIMEOUT_MS,
+  rateLimit: { max: 60, windowMs: 60_000 },
+  schema: isRecord,
+  inputJsonSchema: {
+    type: 'object',
+    properties: {
+      taskId: { type: 'integer', minimum: 1 },
+      limit: { type: 'integer', minimum: 1, maximum: 200 }
+    },
+    required: ['taskId'],
+    additionalProperties: false
+  },
+  authorize: actor => read(actor, 'agent-tasks'),
+  execute: (input, actor) => listAgentTaskEvents(actor, isRecord(input) ? input : {}),
+  summarize: rows => listSummary('Agent 事件', rows),
+  resultView: {
+    kind: 'table',
+    columns: [
+      { key: 'event', label: '事件' },
+      { key: 'fromStatus', label: '原状态' },
+      { key: 'toStatus', label: '新状态' },
+      { key: 'note', label: '备注' },
+      { key: 'createdAt', label: '时间', format: 'datetime' }
+    ]
+  }
+}
+
+const evaluationMetrics: Capability = {
+  id: 'sms.evaluation.metrics',
+  title: '在线评估指标',
+  description: '查询能力命中率、工具失败率等在线评估时序指标',
+  resource: 'evaluation',
+  moduleId: 'sms',
+  operation: 'query',
+  riskLevel: 'low',
+  permission: 'sms.reports.read',
+  approval: 'none',
+  timeoutMs: TIMEOUT_MS,
+  rateLimit: { max: 60, windowMs: 60_000 },
+  schema: isRecord,
+  inputJsonSchema: {
+    type: 'object',
+    properties: {
+      metric: { type: 'string' },
+      since: { type: 'string' },
+      limit: { type: 'integer', minimum: 1, maximum: 500 }
+    },
+    additionalProperties: false
+  },
+  authorize: actor => read(actor, 'reports'),
+  execute: (input, actor) => listEvaluationMetrics(actor, isRecord(input) ? input : {}),
+  summarize: rows => listSummary('评估指标', rows),
+  resultView: {
+    kind: 'table',
+    columns: [
+      { key: 'metric', label: '指标' },
+      { key: 'value', label: '数值' },
+      { key: 'recordedAt', label: '时间', format: 'datetime' }
+    ]
+  }
+}
+
+const auditQuery: Capability = {
+  id: 'sms.audit.query',
+  title: '查询审计日志',
+  description: '按动作/资源/时间查询本组织 SMS 审计记录（只读）',
+  resource: 'audit',
+  moduleId: 'sms',
+  operation: 'query',
+  riskLevel: 'low',
+  permission: 'sms.audit.read',
+  approval: 'none',
+  timeoutMs: TIMEOUT_MS,
+  rateLimit: { max: 30, windowMs: 60_000 },
+  schema: isRecord,
+  inputJsonSchema: {
+    type: 'object',
+    properties: {
+      action: { type: 'string' },
+      resource: { type: 'string' },
+      from: { type: 'string' },
+      to: { type: 'string' },
+      limit: { type: 'integer', minimum: 1, maximum: 500 }
+    },
+    additionalProperties: false
+  },
+  authorize: actor => isSmsAdmin(actor) || (actor.permissions ?? []).includes('sms.audit.read'),
+  execute: (input, actor) => queryAuditLogs(actor, isRecord(input) ? input : {}),
+  summarize: rows => listSummary('审计记录', rows),
+  resultView: {
+    kind: 'table',
+    columns: [
+      { key: 'action', label: '动作' },
+      { key: 'resource', label: '资源' },
+      { key: 'recordId', label: '记录' },
+      { key: 'outcome', label: '结果' },
+      { key: 'createdAt', label: '时间', format: 'datetime' }
+    ]
+  }
+}
+
 const studentsImport: Capability = {
   id: 'sms.students.import',
   title: '批量导入学生',
@@ -4358,11 +4590,16 @@ export const smsCapabilities: Capability[] = [
   notificationsSend,
   knowledgeSearch,
   knowledgeCreate,
+  knowledgeUpdate,
   studentsImport,
+  scoresImport,
   reportsDaily,
+  evaluationMetrics,
+  auditQuery,
   agentTasksList,
   agentTasksCreate,
   agentTasksAdvance,
+  agentTasksEvents,
   assignmentsCreate,
   assignmentsList,
   assignmentsSubmit,

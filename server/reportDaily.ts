@@ -4,7 +4,7 @@
  * One nightly job turns raw attendance rows into per-class daily totals. The
  * dashboard then reads a tiny table instead of scanning `sms_attendance_records`.
  */
-import { and, asc, eq, gte, isNull, lte } from 'drizzle-orm'
+import { and, asc, eq, gte, isNull, lte, sql } from 'drizzle-orm'
 import { createError } from 'h3'
 import { db } from '../../../server/sdk'
 import {
@@ -103,28 +103,33 @@ export async function runDailyReport(targetDate?: unknown): Promise<{
     ))
 
   const buckets = aggregateAttendance(raw)
-  for (const bucket of buckets) {
-    await db.insert(smsReportDaily).values({
-      organizationId: bucket.organizationId,
-      tenantId: bucket.tenantId,
-      reportDate: date,
-      classId: bucket.classId,
-      present: bucket.present,
-      late: bucket.late,
-      absent: bucket.absent,
-      leave: bucket.leave,
-      total: bucket.total
-    }).onConflictDoUpdate({
-      target: [smsReportDaily.organizationId, smsReportDaily.reportDate, smsReportDaily.classId],
-      set: {
+  // 分块批量 upsert：一个班级一行，避免日报任务产生 N 次往返。
+  const CHUNK = 200
+  for (let index = 0; index < buckets.length; index += CHUNK) {
+    const chunk = buckets.slice(index, index + CHUNK)
+    await db.insert(smsReportDaily)
+      .values(chunk.map(bucket => ({
+        organizationId: bucket.organizationId,
+        tenantId: bucket.tenantId,
+        reportDate: date,
+        classId: bucket.classId,
         present: bucket.present,
         late: bucket.late,
         absent: bucket.absent,
         leave: bucket.leave,
-        total: bucket.total,
-        generatedAt: new Date()
-      }
-    })
+        total: bucket.total
+      })))
+      .onConflictDoUpdate({
+        target: [smsReportDaily.organizationId, smsReportDaily.reportDate, smsReportDaily.classId],
+        set: {
+          present: sql`excluded.present`,
+          late: sql`excluded.late`,
+          absent: sql`excluded.absent`,
+          leave: sql`excluded.leave`,
+          total: sql`excluded.total`,
+          generatedAt: new Date()
+        }
+      })
   }
   return { date, rows: buckets.length }
 }

@@ -20,6 +20,7 @@ describe('SMS capabilities', () => {
       'sms.admission-cycles.list',
       'sms.agent-tasks.advance',
       'sms.agent-tasks.create',
+      'sms.agent-tasks.events',
       'sms.agent-tasks.list',
       'sms.applications.convert',
       'sms.applications.create',
@@ -39,6 +40,7 @@ describe('SMS capabilities', () => {
       'sms.attendance.records.list',
       'sms.attendance.roster',
       'sms.attendance.summary',
+      'sms.audit.query',
       'sms.books.create',
       'sms.books.list',
       'sms.classes.list',
@@ -48,6 +50,7 @@ describe('SMS capabilities', () => {
       'sms.enrollments.list',
       'sms.enrollments.transfer',
       'sms.enrollments.withdraw',
+      'sms.evaluation.metrics',
       'sms.exams.create',
       'sms.exams.list',
       'sms.fees.create',
@@ -58,6 +61,7 @@ describe('SMS capabilities', () => {
       'sms.invoices.list',
       'sms.knowledge.create',
       'sms.knowledge.search',
+      'sms.knowledge.update',
       'sms.leave.apply',
       'sms.leave.approve',
       'sms.leave.cancel',
@@ -77,6 +81,7 @@ describe('SMS capabilities', () => {
       'sms.reports.export',
       'sms.reports.finance',
       'sms.reports.scores',
+      'sms.scores.import',
       'sms.scores.publish',
       'sms.scores.query',
       'sms.scores.save',
@@ -97,7 +102,7 @@ describe('SMS capabilities', () => {
 
   it('requires a preview and a form for every write capability', () => {
     const writes = smsCapabilities.filter(capability => capability.operation === 'command')
-    expect(writes).toHaveLength(44)
+    expect(writes).toHaveLength(46)
     for (const capability of writes) {
       expect(capability.preview, capability.id).toBeTypeOf('function')
       expect(capability.riskLevel, capability.id).toMatch(/low|medium|high/)

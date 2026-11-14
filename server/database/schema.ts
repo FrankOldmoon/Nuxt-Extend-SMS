@@ -75,6 +75,8 @@ export const smsSubjects = pgTable(
     tenantId: integer('tenant_id'),
     code: varchar('code', { length: 40 }).notNull(),
     name: varchar('name', { length: 120 }).notNull(),
+    /** 选课容量；为空表示不限制。 */
+    capacity: integer('capacity'),
     deletedAt: timestamp('deleted_at', { withTimezone: true }),
     createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull()
   },
@@ -884,12 +886,16 @@ export const smsAgentTasks = pgTable(
     payload: jsonb('payload').$type<Record<string, unknown>>(),
     result: jsonb('result').$type<Record<string, unknown>>(),
     lastError: varchar('last_error', { length: 500 }),
+    /** 创建方提供的幂等键，重复创建返回既有任务。 */
+    idempotencyKey: varchar('idempotency_key', { length: 80 }),
     updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
     createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull()
   },
   table => ({
     ownerIdx: index('sms_agent_tasks_owner_idx')
-      .on(table.organizationId, table.ownerUserId, table.status, table.updatedAt)
+      .on(table.organizationId, table.ownerUserId, table.status, table.updatedAt),
+    idempotencyIdx: uniqueIndex('sms_agent_tasks_idempotency_idx')
+      .on(table.organizationId, table.idempotencyKey)
   })
 )
 
@@ -907,6 +913,8 @@ export const smsAssignments = pgTable(
     dueAt: timestamp('due_at', { withTimezone: true }),
     /** draft | published | closed */
     status: varchar('status', { length: 20 }).notNull().default('draft'),
+    /** 评分标准：{ criteria: [{ name, weight }] }。 */
+    rubric: jsonb('rubric').$type<Record<string, unknown>>(),
     createdBy: integer('created_by').notNull(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
     createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull()
@@ -926,6 +934,8 @@ export const smsAssignmentSubmissions = pgTable(
     assignmentId: integer('assignment_id').notNull(),
     studentId: integer('student_id').notNull(),
     content: text('content'),
+    /** 站内路径或 http(s) 附件地址。 */
+    attachmentUrl: varchar('attachment_url', { length: 500 }),
     /** submitted | graded */
     status: varchar('status', { length: 20 }).notNull().default('submitted'),
     score: numeric('score', { precision: 6, scale: 2 }),
@@ -957,5 +967,60 @@ export const smsCourseElections = pgTable(
   table => ({
     electionIdx: uniqueIndex('sms_course_elections_unique_idx')
       .on(table.organizationId, table.studentId, table.subjectId, table.termId)
+  })
+)
+
+/** 通知偏好：按用户 + 分类静音，缺失行视为开启。 */
+export const smsNotificationPreferences = pgTable(
+  'sms_notification_preferences',
+  {
+    id: serial('id').primaryKey(),
+    organizationId: integer('organization_id').notNull(),
+    userId: integer('user_id').notNull(),
+    category: varchar('category', { length: 40 }).notNull(),
+    muted: boolean('muted').notNull().default(false),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull()
+  },
+  table => ({
+    userCategoryIdx: uniqueIndex('sms_notification_preferences_unique_idx')
+      .on(table.organizationId, table.userId, table.category)
+  })
+)
+
+/** Agent 任务事件流：每次状态推进都留痕，便于排障与回放。 */
+export const smsAgentTaskEvents = pgTable(
+  'sms_agent_task_events',
+  {
+    id: serial('id').primaryKey(),
+    organizationId: integer('organization_id').notNull(),
+    taskId: integer('task_id').notNull(),
+    event: varchar('event', { length: 40 }).notNull(),
+    fromStatus: varchar('from_status', { length: 30 }),
+    toStatus: varchar('to_status', { length: 30 }),
+    note: varchar('note', { length: 500 }),
+    actorUserId: integer('actor_user_id'),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull()
+  },
+  table => ({
+    taskIdx: index('sms_agent_task_events_task_idx')
+      .on(table.organizationId, table.taskId, table.createdAt)
+  })
+)
+
+/** 在线评估指标：golden set 命中率、工具失败率等时序数据。 */
+export const smsEvaluationMetrics = pgTable(
+  'sms_evaluation_metrics',
+  {
+    id: serial('id').primaryKey(),
+    organizationId: integer('organization_id').notNull(),
+    metric: varchar('metric', { length: 80 }).notNull(),
+    value: numeric('value', { precision: 12, scale: 4 }).notNull(),
+    labels: jsonb('labels').$type<Record<string, unknown>>(),
+    recordedAt: timestamp('recorded_at', { withTimezone: true }).defaultNow().notNull()
+  },
+  table => ({
+    metricIdx: index('sms_evaluation_metrics_metric_idx')
+      .on(table.organizationId, table.metric, table.recordedAt)
   })
 )

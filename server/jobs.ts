@@ -5,9 +5,13 @@
  * unit-tested; the two `run*` functions are the side-effecting task bodies used
  * by `server/tasks/sms/*` (Nitro scheduled tasks).
  */
-import { and, asc, eq, gte, lte, sql } from 'drizzle-orm'
+import { and, asc, eq, gte, inArray, isNull, lte, sql } from 'drizzle-orm'
 import { db } from '../../../server/sdk'
 import { evaluateAttendanceAlerts, normalizeAttendanceStatus, type AttendanceDay } from './attendance'
+import {
+  createNotifications,
+  studentNotificationRecipients
+} from './notifications'
 import {
   smsAttendanceAlerts,
   smsAttendanceRecords,
@@ -143,6 +147,7 @@ export async function runAttendanceAlertScan(now: Date = new Date()): Promise<{
   organizations: number
   studentsScanned: number
   alertsCreated: number
+  notified: number
 }> {
   const since = isoDate(new Date(now.getTime() - ALERT_LOOKBACK_DAYS * DAY_MS))
   const rows = await db.select({
@@ -176,9 +181,11 @@ export async function runAttendanceAlertScan(now: Date = new Date()): Promise<{
   }
 
   const organizations = new Set<number>()
+  const orgTenants = new Map<number, number | null>()
   const values: Array<typeof smsAttendanceAlerts.$inferInsert> = []
   for (const bucket of buckets.values()) {
     organizations.add(bucket.organizationId)
+    orgTenants.set(bucket.organizationId, bucket.tenantId)
     for (const alert of evaluateAttendanceAlerts(bucket.days)) {
       values.push({
         organizationId: bucket.organizationId,
@@ -194,15 +201,103 @@ export async function runAttendanceAlertScan(now: Date = new Date()): Promise<{
   }
 
   let alertsCreated = 0
+  /** 新增预警按学生聚合，扫描结束后统一发通知，避免一条预警一条消息。 */
+  const newAlerts = new Map<string, {
+    organizationId: number
+    tenantId: number | null
+    studentId: number
+    count: number
+  }>()
   for (let index = 0; index < values.length; index += INSERT_CHUNK) {
     const inserted = await db.insert(smsAttendanceAlerts)
       .values(values.slice(index, index + INSERT_CHUNK))
       .onConflictDoNothing()
-      .returning({ id: smsAttendanceAlerts.id })
+      .returning({
+        id: smsAttendanceAlerts.id,
+        organizationId: smsAttendanceAlerts.organizationId,
+        tenantId: smsAttendanceAlerts.tenantId,
+        studentId: smsAttendanceAlerts.studentId
+      })
     alertsCreated += inserted.length
+    for (const row of inserted) {
+      const key = `${row.organizationId}:${row.studentId}`
+      const bucket = newAlerts.get(key) ?? {
+        organizationId: row.organizationId,
+        tenantId: row.tenantId,
+        studentId: row.studentId,
+        count: 0
+      }
+      bucket.count += 1
+      newAlerts.set(key, bucket)
+    }
   }
 
-  return { organizations: organizations.size, studentsScanned: buckets.size, alertsCreated }
+  const notified = await notifyNewAlerts(newAlerts)
+  await recordScanRuns(orgTenants, since, isoDate(now), now, alertsCreated)
+
+  return { organizations: organizations.size, studentsScanned: buckets.size, alertsCreated, notified }
+}
+
+/** 为新增预警找到学生姓名/班级，再投递站内通知。 */
+async function notifyNewAlerts(
+  alerts: Map<string, { organizationId: number, tenantId: number | null, studentId: number, count: number }>
+): Promise<number> {
+  if (alerts.size === 0) return 0
+  const studentIds = [...new Set([...alerts.values()].map(item => item.studentId))]
+  const students = await db.select({
+    id: smsStudents.id,
+    name: smsStudents.name,
+    classId: smsStudents.classId
+  }).from(smsStudents)
+    .where(and(inArray(smsStudents.id, studentIds), isNull(smsStudents.deletedAt)))
+  const byId = new Map(students.map(student => [student.id, student]))
+
+  let notified = 0
+  for (const item of alerts.values()) {
+    const student = byId.get(item.studentId)
+    const recipients = await studentNotificationRecipients(
+      item.organizationId,
+      item.studentId,
+      student?.classId ?? null
+    )
+    if (recipients.length === 0) continue
+    await db.transaction(async (tx) => {
+      notified += await createNotifications(tx, {
+        organizationId: item.organizationId,
+        tenantId: item.tenantId,
+        recipientUserIds: recipients,
+        category: 'attendance',
+        title: `考勤预警：${student?.name ?? `学生 #${item.studentId}`}`,
+        body: `定时扫描新增 ${item.count} 条考勤预警，请查看并跟进。`,
+        link: '/sms',
+        entityType: 'attendance',
+        entityId: item.studentId
+      })
+    })
+  }
+  return notified
+}
+
+/** 记录每次扫描结果，便于运维查看调度是否正常。 */
+async function recordScanRuns(
+  orgTenants: Map<number, number | null>,
+  since: string,
+  today: string,
+  now: Date,
+  alertsCreated: number
+): Promise<void> {
+  for (const [organizationId, tenantId] of orgTenants) {
+    await db.insert(smsReportRuns).values({
+      organizationId,
+      tenantId,
+      kind: 'attendance_scan',
+      periodStart: since,
+      periodEnd: today,
+      status: 'succeeded',
+      payload: { alertsCreated },
+      generatedAt: now
+    })
+  }
 }
 
 interface WeeklyOrgReport {

@@ -15,7 +15,7 @@ import { canUseSms, isSmsAdmin, requireSmsOrganization, type SmsActor } from './
 export const KNOWLEDGE_AUDIENCES = ['all', 'staff', 'student', 'guardian'] as const
 export type KnowledgeAudience = typeof KNOWLEDGE_AUDIENCES[number]
 
-export const KNOWLEDGE_STATUSES = ['published', 'draft'] as const
+export const KNOWLEDGE_STATUSES = ['published', 'draft', 'archived'] as const
 export type KnowledgeStatus = typeof KNOWLEDGE_STATUSES[number]
 
 export function normalizeKnowledgeAudience(value: unknown): KnowledgeAudience {
@@ -28,8 +28,10 @@ export function normalizeKnowledgeAudience(value: unknown): KnowledgeAudience {
 
 export function normalizeKnowledgeStatus(value: unknown): KnowledgeStatus {
   if (value === undefined || value === null || value === '') return 'published'
-  if (value === 'published' || value === 'draft') return value
-  throw createError({ statusCode: 400, message: 'status must be published or draft' })
+  if (typeof value === 'string' && (KNOWLEDGE_STATUSES as readonly string[]).includes(value)) {
+    return value as KnowledgeStatus
+  }
+  throw createError({ statusCode: 400, message: `status must be one of ${KNOWLEDGE_STATUSES.join(', ')}` })
 }
 
 /** Audience filter for the viewer's role. */
@@ -102,7 +104,9 @@ export async function searchKnowledge(actor: SmsActor, options: KnowledgeQuery =
     snippet: row.content.slice(0, 240),
     tags: row.tags,
     audience: row.audience,
-    updatedAt: row.updatedAt
+    updatedAt: row.updatedAt,
+    // 引用信息随结果返回，聊天回答可以注明“出自哪篇文章、何时更新”。
+    citation: { id: row.id, title: row.title, updatedAt: row.updatedAt }
   }))
 }
 
@@ -148,5 +152,78 @@ export async function createKnowledgeArticle(actor: SmsActor, input: CreateKnowl
       source: 'sms-service'
     })
     return row
+  })
+}
+
+export interface UpdateKnowledgeInput {
+  articleId?: unknown
+  title?: unknown
+  content?: unknown
+  tags?: unknown
+  audience?: unknown
+  status?: unknown
+  /** archive = 下架（保留文章与引用记录，不再对检索可见）。 */
+  action?: unknown
+}
+
+/** 编辑或下架文章；下架只改状态，不物理删除，保证引用可追溯。 */
+export async function updateKnowledgeArticle(actor: SmsActor, input: UpdateKnowledgeInput) {
+  const organizationId = requireKnowledgeWrite(actor)
+  const articleId = Number(input.articleId)
+  if (!Number.isSafeInteger(articleId) || articleId <= 0) {
+    throw createError({ statusCode: 400, message: 'articleId 必须是正整数' })
+  }
+  const [current] = await db.select().from(smsKnowledgeArticles)
+    .where(and(
+      eq(smsKnowledgeArticles.id, articleId),
+      eq(smsKnowledgeArticles.organizationId, organizationId)
+    ))
+    .limit(1)
+  if (!current) throw createError({ statusCode: 404, message: 'Knowledge article not found' })
+
+  const patch: Record<string, unknown> = { updatedAt: new Date() }
+  if (input.title !== undefined) {
+    const title = typeof input.title === 'string' ? input.title.trim().slice(0, 200) : ''
+    if (!title) throw createError({ statusCode: 400, message: 'title 不能为空' })
+    patch.title = title
+  }
+  if (input.content !== undefined) {
+    const content = typeof input.content === 'string' ? input.content.trim().slice(0, 20_000) : ''
+    if (!content) throw createError({ statusCode: 400, message: 'content 不能为空' })
+    patch.content = content
+  }
+  if (input.tags !== undefined) {
+    patch.tags = typeof input.tags === 'string' ? input.tags.trim().slice(0, 255) : null
+  }
+  if (input.audience !== undefined) patch.audience = normalizeKnowledgeAudience(input.audience)
+  if (input.status !== undefined) patch.status = normalizeKnowledgeStatus(input.status)
+
+  const archive = input.action === 'archive'
+  if (archive) patch.status = 'archived'
+  if (Object.keys(patch).length === 1) {
+    throw createError({ statusCode: 400, message: '没有需要更新的字段' })
+  }
+
+  return await db.transaction(async (tx) => {
+    const [row] = await tx.update(smsKnowledgeArticles)
+      .set(patch)
+      .where(and(
+        eq(smsKnowledgeArticles.id, articleId),
+        eq(smsKnowledgeArticles.organizationId, organizationId)
+      ))
+      .returning()
+    await writeAudit(tx, {
+      actorUserId: actor.userId,
+      tenantId: actor.tenantId ?? undefined,
+      organizationId,
+      moduleId: 'sms',
+      action: archive ? 'knowledge.archive' : 'knowledge.update',
+      resource: 'knowledge',
+      recordId: articleId,
+      before: { title: current.title, status: current.status, audience: current.audience },
+      after: { title: row?.title, status: row?.status, audience: row?.audience },
+      source: 'sms-service'
+    })
+    return row ?? null
   })
 }

@@ -870,5 +870,78 @@ export const smsMigrations: ModuleMigration[] = [
           ON sms_course_elections (organization_id, student_id, subject_id, term_id);
       `)
     }
+  },
+  {
+    id: 'sms:019-optimization',
+    checksum: '1',
+    async up(executor) {
+      const client = executor as SqlExecutor
+      await client.query(`
+        ALTER TABLE sms_subjects ADD COLUMN IF NOT EXISTS capacity integer;
+        ALTER TABLE sms_assignments ADD COLUMN IF NOT EXISTS rubric jsonb;
+        ALTER TABLE sms_assignment_submissions ADD COLUMN IF NOT EXISTS attachment_url varchar(500);
+        ALTER TABLE sms_agent_tasks ADD COLUMN IF NOT EXISTS idempotency_key varchar(80);
+
+        CREATE UNIQUE INDEX IF NOT EXISTS sms_agent_tasks_idempotency_idx
+          ON sms_agent_tasks (organization_id, idempotency_key);
+
+        CREATE TABLE IF NOT EXISTS sms_notification_preferences (
+          id               serial PRIMARY KEY,
+          organization_id  integer NOT NULL,
+          user_id          integer NOT NULL,
+          category         varchar(40) NOT NULL,
+          muted            boolean NOT NULL DEFAULT false,
+          updated_at       timestamptz NOT NULL DEFAULT now(),
+          created_at       timestamptz NOT NULL DEFAULT now()
+        );
+        CREATE UNIQUE INDEX IF NOT EXISTS sms_notification_preferences_unique_idx
+          ON sms_notification_preferences (organization_id, user_id, category);
+
+        CREATE TABLE IF NOT EXISTS sms_agent_task_events (
+          id               serial PRIMARY KEY,
+          organization_id  integer NOT NULL,
+          task_id          integer NOT NULL,
+          event            varchar(40) NOT NULL,
+          from_status      varchar(30),
+          to_status        varchar(30),
+          note             varchar(500),
+          actor_user_id    integer,
+          created_at       timestamptz NOT NULL DEFAULT now()
+        );
+        CREATE INDEX IF NOT EXISTS sms_agent_task_events_task_idx
+          ON sms_agent_task_events (organization_id, task_id, created_at);
+
+        CREATE TABLE IF NOT EXISTS sms_evaluation_metrics (
+          id               serial PRIMARY KEY,
+          organization_id  integer NOT NULL,
+          metric           varchar(80) NOT NULL,
+          value            numeric(12,4) NOT NULL,
+          labels           jsonb,
+          recorded_at      timestamptz NOT NULL DEFAULT now()
+        );
+        CREATE INDEX IF NOT EXISTS sms_evaluation_metrics_metric_idx
+          ON sms_evaluation_metrics (organization_id, metric, recorded_at);
+      `)
+
+      // pg_trgm 是可选扩展：无权限时跳过索引，关键词检索仍可回退到 ILIKE。
+      await client.query(`
+        DO $$
+        BEGIN
+          CREATE EXTENSION IF NOT EXISTS pg_trgm;
+        EXCEPTION WHEN OTHERS THEN
+          NULL;
+        END $$;
+
+        DO $$
+        BEGIN
+          IF EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'pg_trgm') THEN
+            CREATE INDEX IF NOT EXISTS sms_knowledge_articles_title_trgm_idx
+              ON sms_knowledge_articles USING gin (title gin_trgm_ops);
+            CREATE INDEX IF NOT EXISTS sms_knowledge_articles_content_trgm_idx
+              ON sms_knowledge_articles USING gin (content gin_trgm_ops);
+          END IF;
+        END $$;
+      `)
+    }
   }
 ]

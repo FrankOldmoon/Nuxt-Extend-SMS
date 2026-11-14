@@ -85,17 +85,22 @@ import {
 } from './server/reports'
 import {
   canSendNotification,
+  getNotificationPreferences,
   listNotifications,
   markAllNotificationsRead,
   markNotificationRead,
   sendNotification,
-  unreadNotificationCount
+  unreadNotificationCount,
+  updateNotificationPreferences
 } from './server/notifications'
-import { createKnowledgeArticle, searchKnowledge } from './server/knowledge'
+import { createKnowledgeArticle, searchKnowledge, updateKnowledgeArticle } from './server/knowledge'
 import { buildWorkbench } from './server/workbench'
-import { importStudentsCsv } from './server/imports'
+import { importScoresCsv, importStudentsCsv } from './server/imports'
 import { listDailyReport } from './server/reportDaily'
-import { advanceAgentTask, createAgentTask, listAgentTasks } from './server/agentTasks'
+import { advanceAgentTask, createAgentTask, listAgentTaskEvents, listAgentTasks } from './server/agentTasks'
+import { listEvaluationMetrics, recordEvaluationMetric } from './server/evaluation'
+import { buildSmsMetrics, queryAuditLogs } from './server/observability'
+import { listApprovalInbox, reassignApprovalTask } from './server/approvals'
 import {
   createAssignment,
   gradeSubmission,
@@ -774,8 +779,19 @@ const smsApis: ModuleApiDefinition<SmsActor>[] = [
     method: 'POST',
     path: 'sms/scores/publish',
     schema: isRecord,
+    rateLimit: { max: 10, windowMs: 60_000 },
     authorize: actor => canPublishScores(actor),
     handler: (_event, actor, input) => publishExam(actor, Number((input as Record<string, unknown>).examId))
+  },
+  {
+    id: 'sms.scores.import',
+    moduleId: 'sms',
+    method: 'POST',
+    path: 'sms/scores/import',
+    schema: isRecord,
+    rateLimit: { max: 5, windowMs: 60_000 },
+    authorize: actor => canUseSms(actor, 'update', 'scores'),
+    handler: (_event, actor, input) => importScoresCsv(actor, isRecord(input) ? input : {})
   },
   {
     id: 'sms.scores.query',
@@ -945,6 +961,7 @@ const smsApis: ModuleApiDefinition<SmsActor>[] = [
     method: 'POST',
     path: 'sms/refunds/approve',
     schema: isRecord,
+    rateLimit: { max: 10, windowMs: 60_000 },
     authorize: actor => canApproveRefund(actor),
     handler: (_event, actor, input) => approveRefund(actor, input as Record<string, unknown>)
   },
@@ -1074,6 +1091,7 @@ const smsApis: ModuleApiDefinition<SmsActor>[] = [
     method: 'POST',
     path: 'sms/notifications',
     schema: isRecord,
+    rateLimit: { max: 20, windowMs: 60_000 },
     authorize: actor => canSendNotification(actor),
     handler: (_event, actor, input) => sendNotification(actor, input as Record<string, unknown>)
   },
@@ -1090,6 +1108,26 @@ const smsApis: ModuleApiDefinition<SmsActor>[] = [
         ? markNotificationRead(actor, notificationId)
         : markAllNotificationsRead(actor)
     }
+  },
+  {
+    id: 'sms.notifications.preferences.get',
+    moduleId: 'sms',
+    method: 'GET',
+    path: 'sms/notifications/preferences',
+    schema: isRecord,
+    rateLimit: { max: 60, windowMs: 60_000 },
+    authorize: actor => canUseSms(actor, 'read', 'notifications'),
+    handler: (_event, actor) => getNotificationPreferences(actor)
+  },
+  {
+    id: 'sms.notifications.preferences.update',
+    moduleId: 'sms',
+    method: 'PUT',
+    path: 'sms/notifications/preferences',
+    schema: isRecord,
+    rateLimit: { max: 30, windowMs: 60_000 },
+    authorize: actor => canUseSms(actor, 'read', 'notifications'),
+    handler: (_event, actor, input) => updateNotificationPreferences(actor, isRecord(input) ? input : {})
   },
   {
     id: 'sms.knowledge.search',
@@ -1110,6 +1148,16 @@ const smsApis: ModuleApiDefinition<SmsActor>[] = [
     handler: (_event, actor, input) => createKnowledgeArticle(actor, input as Record<string, unknown>)
   },
   {
+    id: 'sms.knowledge.update',
+    moduleId: 'sms',
+    method: 'POST',
+    path: 'sms/knowledge/update',
+    schema: isRecord,
+    rateLimit: { max: 20, windowMs: 60_000 },
+    authorize: actor => actor.roleName === 'admin' || actor.permissions?.includes('sms.knowledge.create') === true,
+    handler: (_event, actor, input) => updateKnowledgeArticle(actor, input as Record<string, unknown>)
+  },
+  {
     id: 'sms.workbench.summary',
     moduleId: 'sms',
     method: 'GET',
@@ -1119,11 +1167,32 @@ const smsApis: ModuleApiDefinition<SmsActor>[] = [
     handler: (_event, actor) => buildWorkbench(actor)
   },
   {
+    id: 'sms.approvals.inbox',
+    moduleId: 'sms',
+    method: 'GET',
+    path: 'sms/approvals',
+    schema: isRecord,
+    rateLimit: { max: 120, windowMs: 60_000 },
+    authorize: actor => canUseSms(actor, 'read', 'leave') || canUseSms(actor, 'read', 'approvals'),
+    handler: (_event, actor, input) => listApprovalInbox(actor, isRecord(input) ? input : {})
+  },
+  {
+    id: 'sms.approvals.reassign',
+    moduleId: 'sms',
+    method: 'POST',
+    path: 'sms/approvals/reassign',
+    schema: isRecord,
+    rateLimit: { max: 30, windowMs: 60_000 },
+    authorize: actor => canApproveLeave(actor) || canApproveRefund(actor),
+    handler: (_event, actor, input) => reassignApprovalTask(actor, input as Record<string, unknown>)
+  },
+  {
     id: 'sms.students.import',
     moduleId: 'sms',
     method: 'POST',
     path: 'sms/students/import',
     schema: isRecord,
+    rateLimit: { max: 5, windowMs: 60_000 },
     authorize: actor => canUseSms(actor, 'create', 'students'),
     handler: (_event, actor, input) => importStudentsCsv(actor, isRecord(input) ? input : {})
   },
@@ -1135,6 +1204,46 @@ const smsApis: ModuleApiDefinition<SmsActor>[] = [
     schema: isRecord,
     authorize: actor => canUseSms(actor, 'read', 'reports'),
     handler: (_event, actor, input) => listDailyReport(actor, isRecord(input) ? input : {})
+  },
+  {
+    id: 'sms.audit.query',
+    moduleId: 'sms',
+    method: 'GET',
+    path: 'sms/audit',
+    schema: isRecord,
+    rateLimit: { max: 30, windowMs: 60_000 },
+    authorize: actor => actor.roleName === 'admin' || actor.permissions?.includes('sms.audit.read') === true,
+    handler: (_event, actor, input) => queryAuditLogs(actor, isRecord(input) ? input : {})
+  },
+  {
+    id: 'sms.metrics.summary',
+    moduleId: 'sms',
+    method: 'GET',
+    path: 'sms/metrics',
+    schema: isRecord,
+    rateLimit: { max: 60, windowMs: 60_000 },
+    authorize: actor => canUseSms(actor, 'read', 'reports'),
+    handler: (_event, actor) => buildSmsMetrics(actor)
+  },
+  {
+    id: 'sms.evaluation.metrics.list',
+    moduleId: 'sms',
+    method: 'GET',
+    path: 'sms/evaluation/metrics',
+    schema: isRecord,
+    rateLimit: { max: 60, windowMs: 60_000 },
+    authorize: actor => canUseSms(actor, 'read', 'reports'),
+    handler: (_event, actor, input) => listEvaluationMetrics(actor, isRecord(input) ? input : {})
+  },
+  {
+    id: 'sms.evaluation.metrics.record',
+    moduleId: 'sms',
+    method: 'POST',
+    path: 'sms/evaluation/metrics',
+    schema: isRecord,
+    rateLimit: { max: 60, windowMs: 60_000 },
+    authorize: actor => canUseSms(actor, 'read', 'reports'),
+    handler: (_event, actor, input) => recordEvaluationMetric(actor, isRecord(input) ? input : {})
   },
   {
     id: 'sms.agent-tasks.list',
@@ -1162,6 +1271,16 @@ const smsApis: ModuleApiDefinition<SmsActor>[] = [
     schema: isRecord,
     authorize: actor => canUseSms(actor, 'read', 'agent-tasks'),
     handler: (_event, actor, input) => advanceAgentTask(actor, input as Record<string, unknown>)
+  },
+  {
+    id: 'sms.agent-tasks.events',
+    moduleId: 'sms',
+    method: 'GET',
+    path: 'sms/agent-tasks/events',
+    schema: isRecord,
+    rateLimit: { max: 60, windowMs: 60_000 },
+    authorize: actor => canUseSms(actor, 'read', 'agent-tasks'),
+    handler: (_event, actor, input) => listAgentTaskEvents(actor, isRecord(input) ? input : {})
   },
   {
     id: 'sms.assignments.list',
@@ -1387,7 +1506,15 @@ export interface SmsRegistries {
 
 export function registerSmsModule(registries: SmsRegistries): void {
   registerSmsDashboardTables()
-  for (const api of smsApis) registries.api.register(api)
+  for (const api of smsApis) {
+    // 默认限流与能力层保持同一量级：读 120/分、写 30/分；敏感接口单独收紧。
+    registries.api.register({
+      ...api,
+      rateLimit: api.rateLimit ?? (api.method === 'GET'
+        ? { max: 120, windowMs: 60_000 }
+        : { max: 30, windowMs: 60_000 })
+    })
+  }
   // One capability set drives Chat, Apps and Agents (see server/capabilities.ts).
   registerCapabilities(registries.tools, 'sms', smsCapabilities)
   registerChatPrompt('sms', buildSmsChatPrompt)

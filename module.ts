@@ -76,6 +76,7 @@ export const smsModule: ModuleDefinition = {
     'sms.notifications.send',
     'sms.knowledge.read',
     'sms.knowledge.create',
+    'sms.audit.read',
     'sms.agent-tasks.read',
     'sms.agent-tasks.create',
     'sms.assignments.read',
@@ -124,7 +125,10 @@ export const smsModule: ModuleDefinition = {
     'sms_agent_tasks',
     'sms_assignments',
     'sms_assignment_submissions',
-    'sms_course_elections'
+    'sms_course_elections',
+    'sms_notification_preferences',
+    'sms_agent_task_events',
+    'sms_evaluation_metrics'
   ],
   api: [
     'GET /api/modules/sms/students',
@@ -187,7 +191,18 @@ export const smsModule: ModuleDefinition = {
     'POST /api/modules/sms/assignments/submit',
     'POST /api/modules/sms/assignments/grade',
     'GET /api/modules/sms/elections',
-    'POST /api/modules/sms/elections'
+    'POST /api/modules/sms/elections',
+    'POST /api/modules/sms/knowledge/update',
+    'POST /api/modules/sms/scores/import',
+    'GET /api/modules/sms/approvals',
+    'POST /api/modules/sms/approvals/reassign',
+    'GET /api/modules/sms/notifications/preferences',
+    'PUT /api/modules/sms/notifications/preferences',
+    'GET /api/modules/sms/agent-tasks/events',
+    'GET /api/modules/sms/evaluation/metrics',
+    'POST /api/modules/sms/evaluation/metrics',
+    'GET /api/modules/sms/audit',
+    'GET /api/modules/sms/metrics'
   ],
   tools: [
     'sms.students.search',
@@ -255,11 +270,16 @@ export const smsModule: ModuleDefinition = {
     'sms.notifications.send',
     'sms.knowledge.search',
     'sms.knowledge.create',
+    'sms.knowledge.update',
     'sms.students.import',
+    'sms.scores.import',
     'sms.reports.daily',
+    'sms.evaluation.metrics',
+    'sms.audit.query',
     'sms.agent-tasks.list',
     'sms.agent-tasks.create',
     'sms.agent-tasks.advance',
+    'sms.agent-tasks.events',
     'sms.assignments.create',
     'sms.assignments.list',
     'sms.assignments.submit',
@@ -281,6 +301,9 @@ export const smsModule: ModuleDefinition = {
     // (it is imported by nuxt.config at build time).
     const { ensureSmsRoles } = await import('./server/roles')
     await ensureSmsRoles()
+    // Playwright 角色链路需要稳定的演示账号；仅在 SEED_SMS_DEMO_USERS=true 时创建。
+    const { ensureSmsDemoUsers } = await import('./server/demoUsers')
+    await ensureSmsDemoUsers()
   },
   async register(context) {
     const { registerSmsModule } = await import('./register')

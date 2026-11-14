@@ -15,6 +15,15 @@ interface Workbench {
   cards: WorkbenchCard[]
 }
 
+interface NotificationRow {
+  id: number
+  title: string
+  body: string | null
+  link: string | null
+  status: string
+  createdAt: string
+}
+
 useHead({
   title: 'SMS 移动工作台',
   link: [{ rel: 'manifest', href: '/manifest.webmanifest' }],
@@ -25,9 +34,26 @@ useHead({
 })
 
 const { data, pending, error, refresh } = await useFetch<Workbench>('/api/modules/sms/workbench')
+const notifications = ref<NotificationRow[]>([])
+
+const leaveTypes = [
+  { label: '病假', value: 'sick' },
+  { label: '事假', value: 'personal' },
+  { label: '其他', value: 'other' }
+]
+
+const leaveForm = reactive({
+  studentId: '',
+  type: 'sick',
+  startAt: '',
+  endAt: '',
+  reason: ''
+})
+const leaveSubmitting = ref(false)
+const leaveMessage = ref('')
+const leaveError = ref('')
 
 const actions = [
-  { title: '请假申请', prompt: '我要为学生提交一条请假申请，请帮我选择学生和日期。', icon: 'i-lucide-calendar-plus' },
   { title: '考勤登记', prompt: '帮我打开今天的班级考勤名单并登记考勤。', icon: 'i-lucide-clipboard-check' },
   { title: '成绩录入', prompt: '帮我查询最近一场考试的录入表。', icon: 'i-lucide-pen-line' },
   { title: '校规咨询', prompt: '学校的请假制度是怎么规定的？', icon: 'i-lucide-book-open' }
@@ -40,6 +66,72 @@ function openAction(prompt: string): void {
 function openCard(card: WorkbenchCard): void {
   void navigateTo(card.link)
 }
+
+async function loadNotifications(): Promise<void> {
+  try {
+    notifications.value = await $fetch<NotificationRow[]>('/api/modules/sms/notifications', {
+      query: { status: 'unread', limit: 5 }
+    })
+  } catch {
+    notifications.value = []
+  }
+}
+
+async function markRead(row: NotificationRow): Promise<void> {
+  if (row.status === 'read') return
+  try {
+    await $fetch('/api/modules/sms/notifications/read', {
+      method: 'POST',
+      body: { notificationId: row.id }
+    })
+    row.status = 'read'
+    if (row.link) void navigateTo(row.link)
+  } catch {
+    // 失败时保留未读状态，用户可下拉刷新重试。
+  }
+}
+
+async function submitLeave(): Promise<void> {
+  leaveError.value = ''
+  leaveMessage.value = ''
+  const studentId = Number(leaveForm.studentId)
+  if (!Number.isSafeInteger(studentId) || studentId <= 0) {
+    leaveError.value = '请填写学生 ID'
+    return
+  }
+  if (!leaveForm.startAt || !leaveForm.endAt) {
+    leaveError.value = '请选择开始与结束时间'
+    return
+  }
+  leaveSubmitting.value = true
+  try {
+    await $fetch('/api/modules/sms/leave', {
+      method: 'POST',
+      body: {
+        subjectType: 'student',
+        studentId,
+        type: leaveForm.type,
+        startAt: new Date(leaveForm.startAt).toISOString(),
+        endAt: new Date(leaveForm.endAt).toISOString(),
+        reason: leaveForm.reason || undefined
+      }
+    })
+    leaveMessage.value = '请假申请已提交，等待审批。'
+    leaveForm.reason = ''
+  } catch (err) {
+    leaveError.value = err instanceof Error ? err.message : '提交失败，请稍后重试'
+  } finally {
+    leaveSubmitting.value = false
+  }
+}
+
+onMounted(() => {
+  void loadNotifications()
+  // 仅在移动端页面注册 Service Worker，避免影响后台主应用的缓存策略。
+  if (import.meta.client && 'serviceWorker' in navigator) {
+    void navigator.serviceWorker.register('/sw.js').catch(() => undefined)
+  }
+})
 </script>
 
 <template>
@@ -91,6 +183,96 @@ function openCard(card: WorkbenchCard): void {
             {{ card.title }}
           </p>
         </button>
+      </section>
+
+      <section class="space-y-2">
+        <div class="flex items-center justify-between">
+          <h2 class="text-sm font-medium text-highlighted">
+            未读通知
+          </h2>
+          <UButton
+            size="xs"
+            variant="ghost"
+            icon="i-lucide-refresh-cw"
+            @click="loadNotifications()"
+          >
+            刷新
+          </UButton>
+        </div>
+        <p
+          v-if="notifications.length === 0"
+          class="rounded-xl border border-default bg-default p-4 text-xs text-muted"
+        >
+          暂无未读通知
+        </p>
+        <button
+          v-for="row in notifications"
+          :key="row.id"
+          type="button"
+          class="w-full rounded-xl border border-default bg-default p-4 text-left"
+          @click="markRead(row)"
+        >
+          <p class="text-sm font-medium text-highlighted">
+            {{ row.title }}
+          </p>
+          <p
+            v-if="row.body"
+            class="mt-1 text-xs text-muted"
+          >
+            {{ row.body }}
+          </p>
+        </button>
+      </section>
+
+      <section class="space-y-3 rounded-xl border border-default bg-default p-4">
+        <h2 class="text-sm font-medium text-highlighted">
+          请假申请
+        </h2>
+        <div class="grid grid-cols-2 gap-2">
+          <UInput
+            v-model="leaveForm.studentId"
+            placeholder="学生 ID"
+            inputmode="numeric"
+          />
+          <USelect
+            v-model="leaveForm.type"
+            :items="leaveTypes"
+            value-key="value"
+          />
+          <UInput
+            v-model="leaveForm.startAt"
+            type="datetime-local"
+          />
+          <UInput
+            v-model="leaveForm.endAt"
+            type="datetime-local"
+          />
+        </div>
+        <UTextarea
+          v-model="leaveForm.reason"
+          placeholder="请假事由（可选）"
+          :rows="2"
+          class="w-full"
+        />
+        <p
+          v-if="leaveError"
+          class="text-xs text-error"
+        >
+          {{ leaveError }}
+        </p>
+        <p
+          v-if="leaveMessage"
+          class="text-xs text-success"
+        >
+          {{ leaveMessage }}
+        </p>
+        <UButton
+          block
+          :loading="leaveSubmitting"
+          @click="submitLeave()"
+        >
+          提交请假
+        </UButton>
       </section>
 
       <section class="space-y-2">

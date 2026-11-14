@@ -5,7 +5,7 @@
  * Cards are permission- and data-scope-aware: a homeroom teacher only sees their
  * own classes' alerts, while school leaders see organization totals.
  */
-import { and, eq, inArray, isNull, or, sql } from 'drizzle-orm'
+import { and, eq, inArray, isNull, lt, or, sql } from 'drizzle-orm'
 import { db } from '../../../server/sdk'
 import {
   smsApprovalTasks,
@@ -57,16 +57,34 @@ async function openAlertCount(actor: SmsActor, organizationId: number): Promise<
   if (!hasSchoolWideAttendance(actor)) {
     const classIds = await scopedClassIds(actor)
     if (!classIds || classIds.length === 0) return 0
-    const students = await db.select({ id: smsStudents.id }).from(smsStudents)
-      .where(and(
-        eq(smsStudents.organizationId, organizationId),
-        inArray(smsStudents.classId, classIds)
-      ))
-    if (students.length === 0) return 0
-    conditions.push(inArray(smsAttendanceAlerts.studentId, students.map(student => student.id)))
+    conditions.push(inArray(smsStudents.classId, classIds))
   }
+  // 直接 join 学生表按班级过滤，避免先把全班学生 id 拉到应用层。
   const [row] = await db.select({ value: sql<number>`count(*)::int` })
     .from(smsAttendanceAlerts)
+    .innerJoin(smsStudents, and(
+      eq(smsStudents.id, smsAttendanceAlerts.studentId),
+      eq(smsStudents.organizationId, organizationId)
+    ))
+    .where(and(...conditions))
+  return Number(row?.value ?? 0)
+}
+
+/** 超过 SLA 且尚未升级的审批任务数。 */
+async function overdueApprovalCount(actor: SmsActor, organizationId: number): Promise<number> {
+  const conditions = [
+    eq(smsApprovalTasks.organizationId, organizationId),
+    eq(smsApprovalTasks.status, 'pending'),
+    isNull(smsApprovalTasks.escalatedAt),
+    lt(smsApprovalTasks.dueAt, new Date())
+  ]
+  if (!hasSchoolWideLeave(actor)) {
+    const own = eq(smsApprovalTasks.assigneeUserId, actor.userId)
+    const unassigned = canApproveLeave(actor) ? or(own, isNull(smsApprovalTasks.assigneeUserId)) : own
+    if (unassigned) conditions.push(unassigned)
+  }
+  const [row] = await db.select({ value: sql<number>`count(*)::int` })
+    .from(smsApprovalTasks)
     .where(and(...conditions))
   return Number(row?.value ?? 0)
 }
@@ -84,7 +102,7 @@ export async function buildWorkbench(actor: SmsActor): Promise<SmsWorkbench> {
       id: 'notifications',
       title: '未读通知',
       count: await unreadNotificationCount(actor),
-      link: '/sms/notifications',
+      link: '/notifications',
       icon: 'i-lucide-bell'
     })
   }
@@ -102,9 +120,19 @@ export async function buildWorkbench(actor: SmsActor): Promise<SmsWorkbench> {
       id: 'approvals',
       title: '审批任务',
       count: await pendingApprovalCount(actor, organizationId),
-      link: '/sms/chat',
+      link: '/sms/approvals',
       icon: 'i-lucide-check-square'
     })
+    const overdue = await overdueApprovalCount(actor, organizationId)
+    if (overdue > 0) {
+      cards.push({
+        id: 'approvals-overdue',
+        title: '超时审批',
+        count: overdue,
+        link: '/sms/approvals',
+        icon: 'i-lucide-timer-off'
+      })
+    }
   }
 
   if (canUseSms(actor, 'read', 'attendance')) {
@@ -128,7 +156,7 @@ export async function buildWorkbench(actor: SmsActor): Promise<SmsWorkbench> {
       id: 'refunds',
       title: '待审批退费',
       count: Number(row?.value ?? 0),
-      link: '/sms/chat',
+      link: '/sms/approvals',
       icon: 'i-lucide-badge-dollar-sign'
     })
   }
