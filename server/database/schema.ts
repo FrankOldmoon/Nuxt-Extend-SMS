@@ -827,9 +827,12 @@ export const smsNotifications = pgTable(
     link: varchar('link', { length: 255 }),
     entityType: varchar('entity_type', { length: 40 }),
     entityId: integer('entity_id'),
-    /** unread | read */
+    /** unread | read | acknowledged */
     status: varchar('status', { length: 20 }).notNull().default('unread'),
+    /** 需要收件人确认签收的通知。 */
+    requiresAck: boolean('requires_ack').notNull().default(false),
     readAt: timestamp('read_at', { withTimezone: true }),
+    acknowledgedAt: timestamp('acknowledged_at', { withTimezone: true }),
     createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull()
   },
   table => ({

@@ -1025,5 +1025,19 @@ export const smsMigrations: ModuleMigration[] = [
           ON sms_student_movements (organization_id, type, effective_date);
       `)
     }
+  },
+  {
+    id: 'sms:022-notification-ack',
+    checksum: '1',
+    async up(executor) {
+      const client = executor as SqlExecutor
+      await client.query(`
+        ALTER TABLE sms_notifications
+          ADD COLUMN IF NOT EXISTS requires_ack boolean NOT NULL DEFAULT false,
+          ADD COLUMN IF NOT EXISTS acknowledged_at timestamptz;
+        CREATE INDEX IF NOT EXISTS sms_notifications_ack_idx
+          ON sms_notifications (organization_id, recipient_user_id, requires_ack, acknowledged_at);
+      `)
+    }
   }
 ]

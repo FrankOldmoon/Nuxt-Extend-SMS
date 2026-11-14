@@ -197,6 +197,7 @@ export const smsModule: ModuleDefinition = {
     'GET /api/modules/sms/notifications',
     'POST /api/modules/sms/notifications',
     'POST /api/modules/sms/notifications/read',
+    'POST /api/modules/sms/notifications/ack',
     'GET /api/modules/sms/knowledge',
     'POST /api/modules/sms/knowledge',
     'GET /api/modules/sms/workbench',

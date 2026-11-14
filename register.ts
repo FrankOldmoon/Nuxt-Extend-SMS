@@ -16,7 +16,7 @@ import {
   registerDataScopeResolver,
   registerTableValidator
 } from '../../server/sdk'
-import { setResponseHeader } from 'h3'
+import { createError, setResponseHeader } from 'h3'
 import { and, eq, inArray } from 'drizzle-orm'
 import { canUseSms, type SmsActor } from './server/context'
 import { smsCapabilities } from './server/capabilities'
@@ -85,6 +85,7 @@ import {
   scoreReport
 } from './server/reports'
 import {
+  acknowledgeNotification,
   canSendNotification,
   getNotificationPreferences,
   listNotifications,
@@ -1174,6 +1175,21 @@ const smsApis: ModuleApiDefinition<SmsActor>[] = [
       return Number.isSafeInteger(notificationId) && notificationId > 0
         ? markNotificationRead(actor, notificationId)
         : markAllNotificationsRead(actor)
+    }
+  },
+  {
+    id: 'sms.notifications.ack',
+    moduleId: 'sms',
+    method: 'POST',
+    path: 'sms/notifications/ack',
+    schema: isRecord,
+    authorize: actor => canUseSms(actor, 'read', 'notifications'),
+    handler: (_event, actor, input) => {
+      const notificationId = isRecord(input) ? Number(input.notificationId) : 0
+      if (!Number.isSafeInteger(notificationId) || notificationId <= 0) {
+        throw createError({ statusCode: 400, message: 'notificationId 不合法' })
+      }
+      return acknowledgeNotification(actor, notificationId)
     }
   },
   {

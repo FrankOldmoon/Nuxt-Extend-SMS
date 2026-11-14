@@ -8,6 +8,8 @@ interface NotificationRow {
   body: string | null
   link: string | null
   status: string
+  requiresAck: boolean
+  acknowledgedAt: string | null
   createdAt: string
 }
 
@@ -37,7 +39,7 @@ const CATEGORY_COLORS: Record<string, 'primary' | 'success' | 'warning' | 'error
 useHead({ title: 'SMS 通知中心' })
 
 const PAGE_SIZE = 50
-const status = ref<'unread' | 'all'>('unread')
+const status = ref<'unread' | 'all' | 'ack'>('unread')
 const category = ref('all')
 const rows = ref<NotificationRow[]>([])
 const unread = ref(0)
@@ -63,7 +65,8 @@ async function load(reset = false): Promise<void> {
     }
     const response = await $fetch<NotificationResponse>('/api/modules/sms/notifications', {
       query: {
-        status: status.value === 'all' ? 'all' : 'unread',
+        status: status.value === 'unread' ? 'unread' : 'all',
+        ack: status.value === 'ack' ? 'pending' : undefined,
         category: category.value === 'all' ? undefined : category.value,
         cursor: cursor.value ?? undefined,
         limit: PAGE_SIZE
@@ -87,6 +90,20 @@ async function markAllRead(): Promise<void> {
     await load(true)
   } catch (err) {
     error.value = err instanceof Error ? err.message : '操作失败'
+  }
+}
+
+async function acknowledge(row: NotificationRow): Promise<void> {
+  try {
+    const response = await $fetch<{ acknowledgedAt: string }>('/api/modules/sms/notifications/ack', {
+      method: 'POST',
+      body: { notificationId: row.id }
+    })
+    row.status = 'acknowledged'
+    row.acknowledgedAt = response.acknowledgedAt
+    if (status.value === 'ack') await load(true)
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : '签收失败'
   }
 }
 
@@ -170,6 +187,13 @@ onMounted(() => void load(true))
         >
           全部
         </UButton>
+        <UButton
+          size="xs"
+          :variant="status === 'ack' ? 'solid' : 'soft'"
+          @click="status = 'ack'"
+        >
+          待签收
+        </UButton>
         <USelect
           v-model="category"
           :items="categoryOptions"
@@ -211,10 +235,12 @@ onMounted(() => void load(true))
           v-for="row in rows"
           :key="row.id"
         >
-          <button
-            type="button"
-            class="w-full rounded-xl border border-default bg-default p-4 text-left transition-colors hover:border-primary/40"
+          <div
+            role="button"
+            tabindex="0"
+            class="w-full cursor-pointer rounded-xl border border-default bg-default p-4 text-left transition-colors hover:border-primary/40"
             @click="open(row)"
+            @keydown.enter="open(row)"
           >
             <div class="flex flex-wrap items-center gap-2">
               <UBadge
@@ -224,12 +250,41 @@ onMounted(() => void load(true))
               >
                 {{ LABELS[row.category] ?? row.category }}
               </UBadge>
+              <UBadge
+                v-if="row.requiresAck && !row.acknowledgedAt"
+                color="warning"
+                variant="soft"
+                size="sm"
+              >
+                待签收
+              </UBadge>
+              <UBadge
+                v-else-if="row.acknowledgedAt"
+                color="success"
+                variant="soft"
+                size="sm"
+              >
+                已签收
+              </UBadge>
               <span
                 v-if="row.status === 'unread'"
                 class="size-2 rounded-full bg-primary"
                 aria-label="未读"
               />
-              <span class="ml-auto text-[11px] text-muted">
+              <UButton
+                v-if="row.requiresAck && !row.acknowledgedAt"
+                size="xs"
+                color="warning"
+                variant="soft"
+                class="ml-auto"
+                @click.stop="acknowledge(row)"
+              >
+                确认签收
+              </UButton>
+              <span
+                :class="row.requiresAck && !row.acknowledgedAt ? '' : 'ml-auto'"
+                class="text-[11px] text-muted"
+              >
                 {{ new Date(row.createdAt).toLocaleString() }}
               </span>
             </div>
@@ -245,7 +300,7 @@ onMounted(() => void load(true))
             >
               {{ row.body }}
             </p>
-          </button>
+          </div>
         </li>
       </ul>
 

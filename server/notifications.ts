@@ -8,7 +8,7 @@
  * Recipients are always resolved server-side: callers pass a student/class id,
  * never a list of user ids they merely "claim" to own.
  */
-import { and, desc, eq, ilike, inArray, isNull, lt, or, sql } from 'drizzle-orm'
+import { and, desc, eq, ilike, inArray, isNotNull, isNull, lt, or, sql } from 'drizzle-orm'
 import { createError } from 'h3'
 import { createHmac } from 'node:crypto'
 import { db, pool, writeAudit } from '../../../server/sdk'
@@ -32,7 +32,7 @@ export const NOTIFICATION_CATEGORIES = [
 ] as const
 export type NotificationCategory = typeof NOTIFICATION_CATEGORIES[number]
 
-export const NOTIFICATION_STATUSES = ['unread', 'read'] as const
+export const NOTIFICATION_STATUSES = ['unread', 'read', 'acknowledged'] as const
 export type NotificationStatus = typeof NOTIFICATION_STATUSES[number]
 
 export interface NotificationInput {
@@ -45,6 +45,8 @@ export interface NotificationInput {
   link?: string | null
   entityType?: string | null
   entityId?: number | null
+  /** 需要收件人确认签收。 */
+  requiresAck?: boolean
 }
 
 type Tx = Parameters<Parameters<typeof db.transaction>[0]>[0]
@@ -59,8 +61,8 @@ export function normalizeNotificationCategory(value: unknown): NotificationCateg
 
 export function normalizeNotificationStatus(value: unknown): NotificationStatus {
   if (value === undefined || value === null || value === '') return 'unread'
-  if (value === 'unread' || value === 'read') return value
-  throw createError({ statusCode: 400, message: 'status must be unread or read' })
+  if (value === 'unread' || value === 'read' || value === 'acknowledged') return value
+  throw createError({ statusCode: 400, message: 'status must be unread, read or acknowledged' })
 }
 
 function cleanText(value: unknown, max: number): string | null {
@@ -119,6 +121,7 @@ export async function createNotifications(
     link,
     entityType,
     entityId,
+    requiresAck: input.requiresAck === true,
     status: 'unread' as const
   })))
 
@@ -399,6 +402,8 @@ export interface NotificationListQuery {
   category?: unknown
   /** 标题/正文关键词。 */
   query?: unknown
+  /** pending：待签收；acknowledged：已签收。 */
+  ack?: unknown
   limit?: unknown
   /** 游标分页：上一页最后一条的 id。 */
   cursor?: unknown
@@ -421,6 +426,11 @@ export async function listNotifications(actor: SmsActor, options: NotificationLi
   if (options.category !== undefined && options.category !== null && options.category !== '') {
     conditions.push(eq(smsNotifications.category, normalizeNotificationCategory(options.category)))
   }
+  if (options.ack === 'pending') {
+    conditions.push(eq(smsNotifications.requiresAck, true), isNull(smsNotifications.acknowledgedAt))
+  } else if (options.ack === 'acknowledged') {
+    conditions.push(eq(smsNotifications.requiresAck, true), isNotNull(smsNotifications.acknowledgedAt))
+  }
   const query = typeof options.query === 'string' ? options.query.trim().slice(0, 80) : ''
   if (query) {
     const pattern = `%${query}%`
@@ -439,6 +449,8 @@ export async function listNotifications(actor: SmsActor, options: NotificationLi
     entityType: smsNotifications.entityType,
     entityId: smsNotifications.entityId,
     status: smsNotifications.status,
+    requiresAck: smsNotifications.requiresAck,
+    acknowledgedAt: smsNotifications.acknowledgedAt,
     createdAt: smsNotifications.createdAt,
     readAt: smsNotifications.readAt
   }).from(smsNotifications)
@@ -478,6 +490,30 @@ export async function markNotificationRead(actor: SmsActor, notificationId: numb
   return { id: notificationId, status: 'read' as const }
 }
 
+/** 收件人确认签收；只有 requiresAck=true 的通知需要调用。 */
+export async function acknowledgeNotification(actor: SmsActor, notificationId: number) {
+  const organizationId = requireNotificationRead(actor)
+  const [row] = await db.select({
+    id: smsNotifications.id,
+    requiresAck: smsNotifications.requiresAck
+  })
+    .from(smsNotifications)
+    .where(and(
+      eq(smsNotifications.id, notificationId),
+      eq(smsNotifications.organizationId, organizationId),
+      eq(smsNotifications.recipientUserId, actor.userId)
+    ))
+    .limit(1)
+  if (!row) throw createError({ statusCode: 404, message: 'Notification not found' })
+  if (!row.requiresAck) throw createError({ statusCode: 400, message: '该通知无需签收' })
+
+  const now = new Date()
+  await db.update(smsNotifications)
+    .set({ status: 'acknowledged', readAt: now, acknowledgedAt: now })
+    .where(eq(smsNotifications.id, notificationId))
+  return { id: notificationId, status: 'acknowledged' as const, acknowledgedAt: now.toISOString() }
+}
+
 export async function markAllNotificationsRead(actor: SmsActor) {
   const organizationId = requireNotificationRead(actor)
   const rows = await db.update(smsNotifications)
@@ -502,6 +538,7 @@ export interface SendNotificationInput {
   recipientUserIds?: unknown
   roleNames?: unknown
   link?: unknown
+  requiresAck?: unknown
 }
 
 function normalizeIdList(value: unknown): number[] {
@@ -537,6 +574,7 @@ export async function sendNotification(actor: SmsActor, input: SendNotificationI
   const body = cleanText(input.body, 1000)
   const category = normalizeNotificationCategory(input.category)
   const link = cleanLink(input.link)
+  const requiresAck = input.requiresAck === true
 
   const explicit = normalizeIdList(input.recipientUserIds)
   const roles = normalizeRoleList(input.roleNames)
@@ -558,6 +596,7 @@ export async function sendNotification(actor: SmsActor, input: SendNotificationI
       title,
       body,
       link,
+      requiresAck,
       entityType: 'manual',
       entityId: null
     })
@@ -569,7 +608,7 @@ export async function sendNotification(actor: SmsActor, input: SendNotificationI
       action: 'notification.send',
       resource: 'notifications',
       recordId: 0,
-      after: { title, category, recipients: written, link },
+      after: { title, category, recipients: written, link, requiresAck },
       source: 'sms-service'
     })
     return { sent: written, recipients }
