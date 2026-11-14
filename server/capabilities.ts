@@ -131,7 +131,8 @@ const studentSearch: Capability = {
       { key: 'name', label: '姓名' },
       { key: 'studentNo', label: '学号' },
       { key: 'classId', label: '班级 ID', format: 'number' }
-    ]
+    ],
+    component: { id: 'sms.student-table' }
   }
 }
 
@@ -240,7 +241,8 @@ const teacherList: Capability = {
       { key: 'name', label: '姓名' },
       { key: 'employeeNo', label: '工号' },
       { key: 'userId', label: '用户 ID', format: 'number' }
-    ]
+    ],
+    component: { id: 'sms.teacher-table' }
   }
 }
 

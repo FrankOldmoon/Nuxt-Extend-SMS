@@ -7,6 +7,7 @@ import {
 } from '../../../server/sdk'
 import { ToolRegistry } from '../../../server/core/moduleSdk'
 import { smsCapabilities } from '../server/capabilities'
+import { smsModule } from '../module'
 import type { SmsActor } from '../server/context'
 
 describe('SMS capabilities', () => {
@@ -78,6 +79,7 @@ describe('SMS capabilities', () => {
   it('declares a fixed result table for every read capability', () => {
     const reads = smsCapabilities.filter(capability => capability.operation === 'query')
     expect(reads.length).toBeGreaterThan(0)
+    const components = new Set(smsModule.components ?? [])
     for (const capability of reads) {
       expect(capability.resultView?.kind, capability.id).toBe('table')
       expect(capability.resultView?.columns.length, capability.id).toBeGreaterThan(0)
@@ -85,10 +87,18 @@ describe('SMS capabilities', () => {
         expect(column.key, capability.id).toBeTruthy()
         expect(column.label, capability.id).toBeTruthy()
       }
+      // Default components must be registered by the module manifest.
+      if (capability.resultView?.component) {
+        expect(components.has(capability.resultView.component.id), capability.id).toBe(true)
+      }
     }
     for (const capability of smsCapabilities.filter(item => item.operation === 'command')) {
       expect(capability.resultView, capability.id).toBeUndefined()
     }
+    expect(smsCapabilities.find(item => item.id === 'sms.students.search')?.resultView?.component?.id)
+      .toBe('sms.student-table')
+    expect(smsCapabilities.find(item => item.id === 'sms.teachers.list')?.resultView?.component?.id)
+      .toBe('sms.teacher-table')
   })
 
   it('hides write capabilities from read-only roles', () => {
@@ -107,18 +117,19 @@ describe('SMS capabilities', () => {
     expect(describeCapabilities(['*'])).toHaveLength(smsCapabilities.length)
   })
 
-  it('only accepts query/limit props for the student-table component', async () => {
-    const { isSmsStudentTableProps } = await import('../register')
+  it('only accepts query/limit props for chat table components', async () => {
+    const { isSmsChatTableProps } = await import('../register')
 
-    expect(isSmsStudentTableProps({})).toBe(true)
-    expect(isSmsStudentTableProps({ query: '张三', limit: 10 })).toBe(true)
-    expect(isSmsStudentTableProps({ query: 123 })).toBe(false)
-    expect(isSmsStudentTableProps({ limit: 0 })).toBe(false)
-    expect(isSmsStudentTableProps({ limit: 201 })).toBe(false)
-    expect(isSmsStudentTableProps({ limit: 1.5 })).toBe(false)
+    expect(isSmsChatTableProps({})).toBe(true)
+    expect(isSmsChatTableProps({ query: '张三', limit: 10 })).toBe(true)
+    expect(isSmsChatTableProps({ query: 123 })).toBe(false)
+    expect(isSmsChatTableProps({ limit: 0 })).toBe(false)
+    expect(isSmsChatTableProps({ limit: 201 })).toBe(false)
+    expect(isSmsChatTableProps({ limit: 1.5 })).toBe(false)
     // Data must never come from the model.
-    expect(isSmsStudentTableProps({ rows: [{ name: '伪造学生' }] })).toBe(false)
-    expect(isSmsStudentTableProps({ students: [{ name: '伪造学生' }] })).toBe(false)
-    expect(isSmsStudentTableProps(null)).toBe(false)
+    expect(isSmsChatTableProps({ rows: [{ name: '伪造学生' }] })).toBe(false)
+    expect(isSmsChatTableProps({ students: [{ name: '伪造学生' }] })).toBe(false)
+    expect(isSmsChatTableProps({ teachers: [{ name: '伪造教师' }] })).toBe(false)
+    expect(isSmsChatTableProps(null)).toBe(false)
   })
 })

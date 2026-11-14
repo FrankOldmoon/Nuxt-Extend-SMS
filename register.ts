@@ -20,6 +20,7 @@ import { and, eq, inArray } from 'drizzle-orm'
 import { canUseSms, type SmsActor } from './server/context'
 import { smsCapabilities } from './server/capabilities'
 import { buildSmsChatPrompt } from './server/chatPrompt'
+import { generatedChatComponents } from './server/chatComponents.generated'
 import {
   assertClassInContext,
   assignedClassIds,
@@ -604,17 +605,17 @@ const smsApis: ModuleApiDefinition<SmsActor>[] = [
 ]
 
 /**
- * Chat component `sms.student-table`.
+ * Chat table components (`sms.student-table`, `sms.teacher-table`).
  *
  * Props are intentionally limited to a search query and a row limit: the
- * component loads rows itself under the viewer's permissions, so the model can
- * never inject or fabricate student data.
+ * components load rows themselves under the viewer's permissions, so the model
+ * can never inject or fabricate business data.
  */
-export type SmsStudentTableProps = { query?: string, limit?: number }
+export type SmsChatTableProps = { query?: string, limit?: number }
 
-export function isSmsStudentTableProps(value: unknown): value is SmsStudentTableProps {
+export function isSmsChatTableProps(value: unknown): value is SmsChatTableProps {
   if (!isRecord(value)) return false
-  if ('rows' in value || 'students' in value) return false
+  if ('rows' in value || 'students' in value || 'teachers' in value) return false
   if (value.query !== undefined && typeof value.query !== 'string') return false
   if (value.limit !== undefined) {
     if (typeof value.limit !== 'number' || !Number.isSafeInteger(value.limit)) return false
@@ -623,14 +624,33 @@ export function isSmsStudentTableProps(value: unknown): value is SmsStudentTable
   return true
 }
 
-const smsUi: UiDefinition<SmsStudentTableProps, Record<string, unknown>> = {
-  id: 'sms.student-table',
-  moduleId: 'sms',
-  label: '学生表格',
-  version: '1.0',
-  schema: isSmsStudentTableProps,
-  render: props => ({ component: 'sms.student-table', props })
-}
+const smsUi: UiDefinition<SmsChatTableProps, Record<string, unknown>>[] = [
+  {
+    id: 'sms.student-table',
+    moduleId: 'sms',
+    label: '学生表格',
+    description: '学生名单，可打开详情；有更新权限时可编辑',
+    propsHint: 'query?: string, limit?: number',
+    version: '1.0',
+    interactions: { detail: true, edit: { permission: 'sms.students.update' } },
+    appsPath: '/dashboard/students',
+    schema: isSmsChatTableProps,
+    render: props => ({ component: 'sms.student-table', props })
+  },
+  {
+    id: 'sms.teacher-table',
+    moduleId: 'sms',
+    label: '教师表格',
+    description: '教师名单，可打开详情；有更新权限时可编辑',
+    propsHint: 'query?: string, limit?: number',
+    version: '1.0',
+    interactions: { detail: true, edit: { permission: 'sms.teachers.update' } },
+    appsPath: '/dashboard/teachers',
+    schema: isSmsChatTableProps,
+    render: props => ({ component: 'sms.teacher-table', props })
+  },
+  ...generatedChatComponents
+]
 
 export interface SmsRegistries {
   api: ModuleApiRouter<SmsActor>
@@ -644,11 +664,17 @@ export function registerSmsModule(registries: SmsRegistries): void {
   // One capability set drives Chat, Apps and Agents (see server/capabilities.ts).
   registerCapabilities(registries.tools, 'sms', smsCapabilities)
   registerChatPrompt('sms', buildSmsChatPrompt)
-  registries.ui.register({
-    id: smsUi.id,
-    version: smsUi.version,
-    label: smsUi.label,
-    schema: smsUi.schema,
-    render: props => smsUi.render(props as SmsStudentTableProps)
-  })
+  for (const ui of smsUi) {
+    registries.ui.register({
+      id: ui.id,
+      version: ui.version,
+      label: ui.label,
+      description: ui.description,
+      propsHint: ui.propsHint,
+      interactions: ui.interactions,
+      appsPath: ui.appsPath,
+      schema: ui.schema,
+      render: props => ui.render(props as SmsChatTableProps)
+    })
+  }
 }

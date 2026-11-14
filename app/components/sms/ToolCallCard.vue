@@ -1,7 +1,11 @@
 <script setup lang="ts">
 import type { SmsToolCall } from '../../composables/useSmsChat'
 
-const props = defineProps<{ card: SmsToolCall }>()
+const props = defineProps<{
+  card: SmsToolCall
+  /** The message already renders an interactive component for this result. */
+  hideTable?: boolean
+}>()
 
 const hasArguments = computed(() => {
   const args = props.card.arguments
@@ -29,9 +33,10 @@ const statusIcon = computed(() => props.card.status === 'success'
       <span class="min-w-0 flex-1 truncate text-muted">{{ card.summary }}</span>
     </div>
 
-    <!-- Fixed, server-defined table for read capabilities. -->
+    <!-- Fixed, server-defined table for read capabilities. Hidden when the
+         message's interactive component already displays the same rows. -->
     <SmsResultTable
-      v-if="card.table"
+      v-if="card.table && !hideTable"
       :table="card.table"
       class="mx-2.5 mb-2.5 mt-0"
     />

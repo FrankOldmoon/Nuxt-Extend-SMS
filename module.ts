@@ -27,6 +27,7 @@ export const smsModule: ModuleDefinition = {
     'sms.students.delete',
     'sms.classes.read',
     'sms.teachers.read',
+    'sms.teachers.update',
     'sms.enrollments.read',
     'sms.enrollments.create',
     'sms.guardians.read',
@@ -67,7 +68,7 @@ export const smsModule: ModuleDefinition = {
     'sms.teachers.assign',
     'sms.guardians.link'
   ],
-  components: ['sms.student-table'],
+  components: ['sms.student-table', 'sms.teacher-table'],
   migrations: smsMigrations,
   async register(context) {
     const { registerSmsModule } = await import('./register')

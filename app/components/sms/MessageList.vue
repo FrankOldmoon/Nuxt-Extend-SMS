@@ -1,5 +1,4 @@
 <script setup lang="ts">
-import type { Component } from 'vue'
 import type {
   SmsApprovalUi,
   SmsChatMessage,
@@ -8,16 +7,15 @@ import type {
   SmsFormUi,
   SmsResultUi
 } from '../../composables/useSmsChat'
-import SmsStudentTable from './StudentTable.vue'
+import { buildSmsChatComponentMap } from '../../composables/useSmsChatComponents'
 
 /**
- * Client mapping for the server-registered component ids. Importing the
- * components explicitly keeps them in the bundle: Nuxt only auto-registers
- * components that appear in a template, and these are resolved by id.
+ * Component ids are derived from the module's own component filenames and
+ * gated by the server catalog (`/api/agent/components`), so adding a chat
+ * component does not require touching a hand-maintained map.
  */
-const chatComponents: Record<string, Component> = {
-  'sms.student-table': SmsStudentTable
-}
+const chatComponents = buildSmsChatComponentMap()
+const { byId: componentCatalog, loaded: catalogLoaded } = useAgentComponents()
 
 const props = defineProps<{
   messages: SmsChatMessage[]
@@ -82,6 +80,7 @@ const isPendingApproval = (ui?: SmsChatUi) => asApproval(ui)?.batchId === props.
           v-for="call in message.toolCalls ?? []"
           :key="call.id"
           :card="call"
+          :hide-table="!!asComponent(message.ui)"
         />
 
         <template v-if="asForm(message.ui)">
@@ -139,6 +138,8 @@ const isPendingApproval = (ui?: SmsChatUi) => asApproval(ui)?.batchId === props.
           v-else-if="asComponent(message.ui)"
           :ui="asComponent(message.ui)!"
           :components="chatComponents"
+          :catalog="componentCatalog"
+          :catalog-loaded="catalogLoaded"
         />
       </div>
     </template>
