@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import type { TableMetaWithOptions } from '~/types/dashboard'
 import type { SmsRecordField } from '../../composables/useSmsRecord'
 import { formatSmsRecordValue } from '../../composables/useSmsRecord'
 
@@ -27,13 +28,24 @@ const emit = defineEmits<{
 
 const editing = ref(false)
 const validation = ref('')
-const values = reactive<Record<string, string>>({})
+const values = ref<Record<string, unknown>>({})
+const fieldErrors = ref<Record<string, string>>({})
+const meta = computed<TableMetaWithOptions>(() => ({
+  table: 'sms-record', label: props.title, icon: 'i-lucide-file-text', custom: false,
+  features: { softDelete: false, search: [] },
+  fields: props.fields.map(field => ({
+    key: field.key, label: field.label, type: field.type ?? 'text',
+    nullable: !field.required, editable: field.editable !== false,
+    showInForm: field.editable !== false, showInTable: false, showInDetail: true,
+    validation: field.editable === false ? undefined : { required: field.required },
+    options: field.options
+  })),
+  relationOptions: Object.fromEntries(props.fields.filter(f => f.options).map(f => [f.key, f.options!]))
+}))
 
 function resetValues(): void {
-  for (const field of props.fields) {
-    const raw = props.record?.[field.key]
-    values[field.key] = raw === null || raw === undefined ? '' : String(raw)
-  }
+  values.value = Object.fromEntries(props.fields.map(field => [field.key, props.record?.[field.key] ?? null]))
+  fieldErrors.value = {}
 }
 
 watch(() => props.open, () => {
@@ -64,10 +76,12 @@ function startEdit(): void {
 }
 
 function submit(): void {
+  fieldErrors.value = validateForm(meta.value, values.value, 'update')
+  if (Object.keys(fieldErrors.value).length) return
   const payload: Record<string, unknown> = {}
   for (const field of props.fields) {
     if (field.editable === false) continue
-    const raw = values[field.key] ?? ''
+    const raw = String(values.value[field.key] ?? '')
     if (field.type === 'select') {
       if (raw === '') {
         if (field.required) {
@@ -129,73 +143,29 @@ function submit(): void {
           {{ error }}
         </p>
 
-        <dl
+        <DashboardCrudDetail
           v-if="!editing"
-          class="space-y-2 text-sm"
+          :meta="meta"
+          :item="record"
         >
-          <div
+          <template
             v-for="field in fields"
             :key="field.key"
-            class="flex gap-3"
+            #[`detail-${field.key}`]
           >
-            <dt class="w-20 shrink-0 text-muted">
-              {{ field.label }}
-            </dt>
-            <dd class="min-w-0 flex-1 break-words text-highlighted">
-              {{ display(field) }}
-            </dd>
-          </div>
-        </dl>
-
+            {{ display(field) }}
+          </template>
+        </DashboardCrudDetail>
         <form
           v-else
-          class="space-y-3"
           @submit.prevent="submit"
         >
-          <div
-            v-for="field in fields"
-            :key="field.key"
-          >
-            <label
-              :for="`record-${field.key}`"
-              class="mb-1 block text-xs font-medium text-toned"
-            >
-              {{ field.label }}
-              <span
-                v-if="field.required"
-                class="text-red-500"
-              >*</span>
-            </label>
-
-            <template v-if="field.editable === false">
-              <p class="text-sm text-highlighted">
-                {{ display(field) }}
-              </p>
-            </template>
-
-            <select
-              v-else-if="field.type === 'select'"
-              :id="`record-${field.key}`"
-              v-model="values[field.key]"
-              class="w-full rounded-lg border border-default bg-default px-2.5 py-1.5 text-sm text-highlighted outline-none focus:border-primary"
-            >
-              <option
-                v-for="option in field.options ?? []"
-                :key="String(option.value)"
-                :value="String(option.value ?? '')"
-              >
-                {{ option.label }}
-              </option>
-            </select>
-
-            <input
-              v-else
-              :id="`record-${field.key}`"
-              v-model="values[field.key]"
-              :type="field.type === 'number' ? 'number' : 'text'"
-              class="w-full rounded-lg border border-default bg-default px-2.5 py-1.5 text-sm text-highlighted outline-none focus:border-primary"
-            >
-          </div>
+          <DashboardCrudForm
+            v-model="values"
+            :meta="meta"
+            mode="update"
+            :errors="fieldErrors"
+          />
         </form>
 
         <p

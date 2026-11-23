@@ -247,6 +247,7 @@ export interface ApprovalInboxItem {
   subjectId: number
   step: number
   title: string
+  refundSettlement?: string | null
   assigneeUserId: number | null
   dueAt: string | null
   overdue: boolean
@@ -322,7 +323,7 @@ export async function listApprovalInbox(
           .where(and(eq(smsLeaveRequests.organizationId, organizationId), inArray(smsLeaveRequests.id, leaveIds)))
       : Promise.resolve([]),
     refundIds.length
-      ? db.select({ id: smsRefunds.id, amount: smsRefunds.amount })
+      ? db.select({ id: smsRefunds.id, amount: smsRefunds.amount, settlement: smsRefunds.settlement })
           .from(smsRefunds)
           .where(and(eq(smsRefunds.organizationId, organizationId), inArray(smsRefunds.id, refundIds)))
       : Promise.resolve([])
@@ -343,6 +344,7 @@ export async function listApprovalInbox(
       subjectId: task.subjectId,
       step: task.step,
       title,
+      refundSettlement: subjectType === 'refund' ? refund?.settlement ?? null : undefined,
       assigneeUserId: task.assigneeUserId,
       dueAt: task.dueAt ? task.dueAt.toISOString() : null,
       overdue: Boolean(task.status === 'pending' && task.dueAt && task.dueAt.getTime() < now.getTime()),

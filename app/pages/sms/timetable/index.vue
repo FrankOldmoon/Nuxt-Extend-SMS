@@ -372,21 +372,23 @@ onMounted(async () => {
           <label class="space-y-1 text-xs text-muted">
             <span>班级</span>
             <USelect
-              v-model="classId"
-              :items="[{ label: '全部可见班级', value: '' }, ...classOptions]"
+              :model-value="classId || '__all__'"
+              :items="[{ label: '全部可见班级', value: '__all__' }, ...classOptions]"
               value-key="value"
+              @update:model-value="classId = $event === '__all__' ? '' : String($event)"
             />
           </label>
           <label class="space-y-1 text-xs text-muted">
             <span>状态</span>
             <USelect
-              v-model="status"
+              :model-value="status || '__all__'"
               :items="[
-                { label: '全部状态', value: '' },
+                { label: '全部状态', value: '__all__' },
                 { label: '草稿', value: 'draft' },
                 { label: '已发布', value: 'published' }
               ]"
               value-key="value"
+              @update:model-value="status = $event === '__all__' ? '' : String($event)"
             />
           </label>
         </div>
@@ -632,73 +634,57 @@ onMounted(async () => {
           v-else
           class="overflow-x-auto rounded-lg border border-default"
         >
-          <table class="w-full text-left text-sm">
-            <thead class="bg-elevated/50 text-xs text-muted">
-              <tr>
-                <th class="px-3 py-2">
-                  日期
-                </th>
-                <th class="px-3 py-2">
-                  课程
-                </th>
-                <th class="px-3 py-2">
-                  类型
-                </th>
-                <th class="px-3 py-2">
-                  原教师
-                </th>
-                <th class="px-3 py-2">
-                  代课教师
-                </th>
-                <th class="px-3 py-2">
-                  教室
-                </th>
-                <th class="px-3 py-2">
-                  原因
-                </th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr
-                v-for="row in substitutions"
-                :key="row.id"
-                class="border-t border-default"
-              >
-                <td class="px-3 py-2 text-xs text-toned">
-                  {{ row.date }}
-                </td>
-                <td class="px-3 py-2">
-                  <p class="text-highlighted">
-                    {{ row.className ?? `#${row.classId}` }} · {{ row.subjectName ?? '未命名课程' }}
-                  </p>
-                  <p class="text-xs text-muted">
-                    {{ WEEKDAYS[row.weekday - 1] }} 第{{ row.periodNo }}节
-                  </p>
-                </td>
-                <td class="px-3 py-2">
-                  <UBadge
-                    :color="row.type === 'substitute' ? 'primary' : 'warning'"
-                    variant="soft"
-                    size="sm"
-                  >
-                    {{ row.type === 'substitute' ? '代课' : '调课' }}
-                  </UBadge>
-                </td>
-                <td class="px-3 py-2 text-xs text-toned">
-                  {{ row.teacherName ?? '—' }}
-                </td>
-                <td class="px-3 py-2 text-xs text-toned">
-                  {{ row.substituteName ?? '—' }}
-                </td>
-                <td class="px-3 py-2 text-xs text-toned">
-                  {{ row.room ?? '沿用原教室' }}
-                </td>
-                <td class="max-w-[180px] px-3 py-2 text-xs text-muted">
-                  <span class="line-clamp-2">{{ row.reason ?? '—' }}</span>
-                </td>
-              </tr>
-            </tbody>
-          </table>
+          <DashboardBusinessTable
+            :items="substitutions"
+            :fields="[{ key: 'date', label: '日期', type: 'text' }, { key: 'className', label: '课程', type: 'text' }, { key: 'type', label: '类型', type: 'text' }, { key: 'teacherName', label: '原教师', type: 'text' }, { key: 'substituteName', label: '代课教师', type: 'text' }, { key: 'room', label: '教室', type: 'text' }, { key: 'reason', label: '原因', type: 'text' }]"
+          >
+            <template #table-date="{ item: row }">
+              <div class="px-3 py-2 text-xs text-toned">
+                {{ row.date }}
+              </div>
+            </template>
+            <template #table-className="{ item: row }">
+              <div class="px-3 py-2">
+                <p class="text-highlighted">
+                  {{ row.className ?? `#${row.classId}` }} · {{ row.subjectName ?? '未命名课程' }}
+                </p>
+                <p class="text-xs text-muted">
+                  {{ WEEKDAYS[row.weekday - 1] }} 第{{ row.periodNo }}节
+                </p>
+              </div>
+            </template>
+            <template #table-type="{ item: row }">
+              <div class="px-3 py-2">
+                <UBadge
+                  :color="row.type === 'substitute' ? 'primary' : 'warning'"
+                  variant="soft"
+                  size="sm"
+                >
+                  {{ row.type === 'substitute' ? '代课' : '调课' }}
+                </UBadge>
+              </div>
+            </template>
+            <template #table-teacherName="{ item: row }">
+              <div class="px-3 py-2 text-xs text-toned">
+                {{ row.teacherName ?? '—' }}
+              </div>
+            </template>
+            <template #table-substituteName="{ item: row }">
+              <div class="px-3 py-2 text-xs text-toned">
+                {{ row.substituteName ?? '—' }}
+              </div>
+            </template>
+            <template #table-room="{ item: row }">
+              <div class="px-3 py-2 text-xs text-toned">
+                {{ row.room ?? '沿用原教室' }}
+              </div>
+            </template>
+            <template #table-reason="{ item: row }">
+              <div class="max-w-[180px] px-3 py-2 text-xs text-muted">
+                <span class="line-clamp-2">{{ row.reason ?? '—' }}</span>
+              </div>
+            </template>
+          </DashboardBusinessTable>
         </div>
       </section>
     </div>

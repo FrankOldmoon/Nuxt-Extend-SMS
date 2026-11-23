@@ -1988,7 +1988,7 @@ const scoresPublish: Capability = {
 const scoresQuery: Capability = {
   id: 'sms.scores.query',
   title: '查询成绩',
-  description: '按考试、学生或班级查询成绩（学生/家长仅可见已发布成绩）',
+  description: '按科目名称/代码（如 PE、ICT）、考试、学生、班级或学期查询成绩。查某科最高分时直接传 subject 和 sort=scoreDesc，不必逐班查询。未指定范围时可用 status=published 查可见范围内已发布成绩，并在回答说明范围；最高分可能并列，按学生去重，若满分不同应说明不可直接排名。最多返回200条，不能把截断列表当完整统计。学生/家长仅可见已发布成绩。',
   resource: 'scores',
   moduleId: 'sms',
   operation: 'query',
@@ -2004,6 +2004,11 @@ const scoresQuery: Capability = {
       examId: { type: 'integer', minimum: 1 },
       studentId: { type: 'integer', minimum: 1 },
       classId: { type: 'integer', minimum: 1 },
+      subjectId: { type: 'integer', minimum: 1 },
+      subject: { type: 'string', description: '科目名称或代码，例如 PE、ICT、STEAM、體育' },
+      termId: { type: 'integer', minimum: 1 },
+      status: { type: 'string', enum: ['draft', 'published', 'closed'] },
+      sort: { type: 'string', enum: ['scoreDesc'], description: '按原始分数从高到低排序，排除缺考和未录入；查询最高分时使用，并检查满分与并列分数' },
       limit: { type: 'integer', minimum: 1, maximum: 200 }
     },
     additionalProperties: false
@@ -3007,7 +3012,8 @@ const refundsApprove: Capability = {
     properties: {
       refundId: { type: 'integer', minimum: 1 },
       decision: { type: 'string', enum: ['approve', 'reject'] },
-      comment: { type: 'string' }
+      comment: { type: 'string' },
+      settlement: { type: 'string', enum: ['reduce_fee', 'return_payment'], description: '同意退费时必填：reduce_fee 取消或减免等额费用；return_payment 仅退回款项，费用仍需缴纳' }
     },
     required: ['refundId', 'decision'],
     additionalProperties: false
@@ -3025,6 +3031,7 @@ const refundsApprove: Capability = {
           { label: '驳回', value: 'reject' }
         ]
       },
+      { key: 'settlement', label: '退费账务处理（同意时必选）', type: 'select', options: [{ label: '取消/减免等额费用', value: 'reduce_fee' }, { label: '仅退回款项，费用仍需缴纳', value: 'return_payment' }] },
       { key: 'comment', label: '意见', type: 'textarea' }
     ],
     submitLabel: '提交',
@@ -3041,9 +3048,9 @@ const refundsApprove: Capability = {
     if (!refund) throw createError({ statusCode: 409, message: '退费申请不存在或已处理' })
     return {
       summary: `将${decision === 'approve' ? '同意' : '驳回'}「${refund.studentName ?? `#${refund.invoiceId}`}」的 ¥${refund.amount.toFixed(2)} 退费申请。`,
-      details: { refundId, decision, amount: refund.amount, invoiceId: refund.invoiceId },
+      details: { refundId, decision, amount: refund.amount, invoiceId: refund.invoiceId, settlement: args.settlement },
       impact: 1,
-      warnings: decision === 'approve' ? ['同意后将从已缴金额中扣减退费金额。'] : undefined,
+      warnings: decision === 'approve' ? [args.settlement === 'reduce_fee' ? '同意后同时扣减应收和已缴，不增加欠费。' : args.settlement === 'return_payment' ? '同意后只扣减已缴，该款项将重新成为待缴费用。' : '必须选择账务处理方式后才能同意退费。'] : undefined,
       fieldOptions: {
         refundId: pending.map(row => ({
           label: `${row.studentName ?? `#${row.invoiceId}`} · ¥${row.amount.toFixed(2)}`,

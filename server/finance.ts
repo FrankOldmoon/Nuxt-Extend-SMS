@@ -7,6 +7,7 @@
  */
 import { and, desc, eq, gte, inArray, isNull, lt } from 'drizzle-orm'
 import { createError } from 'h3'
+import { applyRefundAccounting, normalizeRefundSettlement } from './refundAccounting'
 import { db, writeAudit } from '../../../server/sdk'
 import {
   smsFeeItems,
@@ -59,8 +60,8 @@ export function normalizeNonNegativeAmount(value: unknown, field: string): numbe
 }
 
 export function computeInvoiceStatus(payable: number, paid: number): InvoiceStatus {
-  if (paid <= 0) return 'unpaid'
   if (paid >= payable) return 'paid'
+  if (paid <= 0) return 'unpaid'
   return 'partial'
 }
 
@@ -290,6 +291,7 @@ export async function listInvoices(actor: SmsActor, options: InvoiceListQuery = 
     amount: smsInvoices.amount,
     discount: smsInvoices.discount,
     payable: smsInvoices.payable,
+    credited: smsInvoices.credited,
     paid: smsInvoices.paid,
     status: smsInvoices.status,
     dueDate: smsInvoices.dueDate,
@@ -305,6 +307,7 @@ export async function listInvoices(actor: SmsActor, options: InvoiceListQuery = 
     amount: Number(row.amount),
     discount: Number(row.discount),
     payable: Number(row.payable),
+    credited: Number(row.credited),
     paid: Number(row.paid)
   }))
 }
@@ -396,20 +399,20 @@ export async function recordPayment(actor: SmsActor, input: RecordPaymentInput) 
     ? input.reference.trim().slice(0, 80)
     : null
 
-  const [invoice] = await db.select().from(smsInvoices)
-    .where(and(eq(smsInvoices.id, invoiceId), eq(smsInvoices.organizationId, organizationId)))
-    .limit(1)
-  if (!invoice) throw createError({ statusCode: 404, message: 'Invoice not found' })
-  if (invoice.status === 'void') throw createError({ statusCode: 409, message: 'Void invoices cannot receive payments' })
-
-  const payable = Number(invoice.payable)
-  const paid = Number(invoice.paid)
-  const outstanding = round2(payable - paid)
-  if (amount > outstanding + 0.001) {
-    throw createError({ statusCode: 400, message: `amount exceeds the outstanding balance (${outstanding})` })
-  }
-
   return await db.transaction(async (tx) => {
+    const [invoice] = await tx.select().from(smsInvoices)
+      .where(and(eq(smsInvoices.id, invoiceId), eq(smsInvoices.organizationId, organizationId)))
+      .for('update').limit(1)
+    if (!invoice) throw createError({ statusCode: 404, message: 'Invoice not found' })
+    if (invoice.status === 'void') throw createError({ statusCode: 409, message: 'Void invoices cannot receive payments' })
+
+    const payable = Number(invoice.payable)
+    const paid = Number(invoice.paid)
+    const outstanding = round2(payable - paid)
+    if (amount > outstanding + 0.001) {
+      throw createError({ statusCode: 400, message: `amount exceeds the outstanding balance (${outstanding})` })
+    }
+
     const [payment] = await tx.insert(smsPayments).values({
       organizationId,
       tenantId: actor.tenantId ?? null,
@@ -738,6 +741,7 @@ export async function requestRefund(actor: SmsActor, input: RequestRefundInput) 
 }
 
 export interface ApproveRefundInput {
+  settlement?: unknown
   refundId?: unknown
   decision?: unknown
   comment?: unknown
@@ -752,52 +756,52 @@ export async function approveRefund(actor: SmsActor, input: ApproveRefundInput) 
   const decision = input.decision === 'approve' || input.decision === 'reject' ? input.decision : null
   if (!decision) throw createError({ statusCode: 400, message: 'decision must be approve or reject' })
 
-  const [refund] = await db.select().from(smsRefunds)
-    .where(and(eq(smsRefunds.id, refundId), eq(smsRefunds.organizationId, organizationId)))
-    .limit(1)
-  if (!refund) throw createError({ statusCode: 404, message: 'Refund not found' })
-  if (refund.status !== 'pending') throw createError({ statusCode: 409, message: `Refund is already ${refund.status}` })
-  if (refund.requestedBy === actor.userId && !isSmsAdmin(actor)) {
-    throw createError({ statusCode: 403, statusMessage: 'Forbidden', message: 'Refunds require a second approver' })
-  }
-  const approvalTask = await loadPendingApprovalTask(db, {
-    organizationId,
-    subjectType: 'refund',
-    subjectId: refundId
-  })
-
+  const settlement = decision === 'approve' ? normalizeRefundSettlement(input.settlement) : null
   return await db.transaction(async (tx) => {
+    const [refund] = await tx.select().from(smsRefunds)
+      .where(and(eq(smsRefunds.id, refundId), eq(smsRefunds.organizationId, organizationId)))
+      .for('update')
+      .limit(1)
+    if (!refund) throw createError({ statusCode: 404, message: 'Refund not found' })
+    if (refund.status !== 'pending') throw createError({ statusCode: 409, message: '退费已处理，请刷新列表' })
+    if (refund.requestedBy === actor.userId && !isSmsAdmin(actor)) {
+      throw createError({ statusCode: 403, message: 'Refunds require a second approver' })
+    }
+    let invoicePaid: number | null = null
+    let invoicePayable: number | null = null
+    let invoiceBefore: { paid: string, payable: string, credited: string } | null = null
+    if (decision === 'approve' && settlement) {
+      // Serialize all refunds on this payment, then lock its invoice before changing balances.
+      const [payment] = await tx.select().from(smsPayments)
+        .where(and(eq(smsPayments.id, refund.paymentId), eq(smsPayments.organizationId, organizationId)))
+        .for('update').limit(1)
+      if (!payment || payment.invoiceId !== refund.invoiceId) throw createError({ statusCode: 409, message: '退费关联收款不一致' })
+      const approved = await tx.select({ amount: smsRefunds.amount }).from(smsRefunds)
+        .where(and(eq(smsRefunds.paymentId, payment.id), eq(smsRefunds.organizationId, organizationId), eq(smsRefunds.status, 'approved')))
+      const refundable = round2(Number(payment.amount) - approved.reduce((sum, row) => sum + Number(row.amount), 0))
+      if (Number(refund.amount) > refundable) throw createError({ statusCode: 409, message: '退费累计金额超过原收款，请驳回或重新申请' })
+      const [invoice] = await tx.select().from(smsInvoices)
+        .where(and(eq(smsInvoices.id, refund.invoiceId), eq(smsInvoices.organizationId, organizationId)))
+        .for('update').limit(1)
+      if (!invoice || invoice.status === 'void') throw createError({ statusCode: 409, message: '账单不存在或已作废' })
+      invoiceBefore = { paid: invoice.paid, payable: invoice.payable, credited: invoice.credited }
+      const next = applyRefundAccounting({ paid: Number(invoice.paid), payable: Number(invoice.payable), credited: Number(invoice.credited) }, Number(refund.amount), settlement)
+      await tx.update(smsInvoices).set({ paid: next.paid.toFixed(2), payable: next.payable.toFixed(2), credited: next.credited.toFixed(2), status: next.status, updatedAt: new Date() })
+        .where(eq(smsInvoices.id, invoice.id))
+      invoicePaid = next.paid
+      invoicePayable = next.payable
+    }
+    const approvalTask = await loadPendingApprovalTask(tx, { organizationId, subjectType: 'refund', subjectId: refundId })
     if (approvalTask) {
       await completeApprovalTask(tx, {
-        taskId: approvalTask.id,
-        actorUserId: actor.userId,
+        taskId: approvalTask.id, actorUserId: actor.userId,
         decision: decision === 'approve' ? 'approved' : 'rejected',
         comment: typeof input.comment === 'string' ? input.comment.slice(0, 500) : null
       })
     }
     const [updated] = await tx.update(smsRefunds)
-      .set({
-        status: decision === 'approve' ? 'approved' : 'rejected',
-        approvedBy: actor.userId,
-        approvedAt: new Date()
-      })
-      .where(eq(smsRefunds.id, refundId))
-      .returning()
-    let invoicePaid: number | null = null
-    if (decision === 'approve') {
-      const [invoice] = await tx.select().from(smsInvoices)
-        .where(eq(smsInvoices.id, refund.invoiceId))
-        .limit(1)
-      if (invoice) {
-        const amount = Number(refund.amount)
-        const newPaid = Math.max(0, round2(Number(invoice.paid) - amount))
-        const payable = Number(invoice.payable)
-        await tx.update(smsInvoices)
-          .set({ paid: newPaid.toFixed(2), status: computeInvoiceStatus(payable, newPaid), updatedAt: new Date() })
-          .where(eq(smsInvoices.id, invoice.id))
-        invoicePaid = newPaid
-      }
-    }
+      .set({ status: decision === 'approve' ? 'approved' : 'rejected', settlement, approvedBy: actor.userId, approvedAt: new Date() })
+      .where(eq(smsRefunds.id, refundId)).returning()
     await writeAudit(tx, {
       actorUserId: actor.userId,
       tenantId: actor.tenantId ?? undefined,
@@ -806,8 +810,8 @@ export async function approveRefund(actor: SmsActor, input: ApproveRefundInput) 
       action: 'refund.approve',
       resource: 'finance',
       recordId: refundId,
-      before: { status: refund.status },
-      after: { status: updated?.status ?? decision, invoicePaid },
+      before: { status: refund.status, invoice: invoiceBefore },
+      after: { status: updated?.status ?? decision, invoicePaid, invoicePayable, settlement },
       source: 'sms-service'
     })
     await notifyRefundDecided(tx, {
@@ -817,7 +821,7 @@ export async function approveRefund(actor: SmsActor, input: ApproveRefundInput) 
       requesterUserId: refund.requestedBy,
       status: decision === 'approve' ? 'approved' : 'rejected'
     })
-    return { id: refundId, status: updated?.status ?? decision, invoiceId: refund.invoiceId, invoicePaid }
+    return { id: refundId, status: updated?.status ?? decision, invoiceId: refund.invoiceId, invoicePaid, invoicePayable, settlement }
   })
 }
 
@@ -834,6 +838,7 @@ export async function listRefunds(actor: SmsActor, options: { status?: unknown, 
     invoiceId: smsRefunds.invoiceId,
     amount: smsRefunds.amount,
     reason: smsRefunds.reason,
+    settlement: smsRefunds.settlement,
     status: smsRefunds.status,
     requestedBy: smsRefunds.requestedBy,
     approvedBy: smsRefunds.approvedBy,

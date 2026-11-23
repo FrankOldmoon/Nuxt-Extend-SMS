@@ -339,44 +339,32 @@ onMounted(loadExams)
             </UButton>
           </div>
           <div class="max-h-64 overflow-y-auto">
-            <table class="w-full text-left text-xs">
-              <thead class="text-muted">
-                <tr>
-                  <th class="py-1 pr-2">
-                    行
-                  </th>
-                  <th class="py-1 pr-2">
-                    学号
-                  </th>
-                  <th class="py-1 pr-2">
-                    状态
-                  </th>
-                  <th class="py-1">
-                    说明
-                  </th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr
-                  v-for="row in preview.rows"
-                  :key="row.line"
-                  class="border-t border-default"
-                >
-                  <td class="py-1 pr-2">
-                    {{ row.line }}
-                  </td>
-                  <td class="py-1 pr-2">
-                    {{ row.studentNo ?? '—' }}
-                  </td>
-                  <td class="py-1 pr-2">
-                    {{ row.status }}
-                  </td>
-                  <td class="py-1">
-                    {{ row.message ?? '' }}
-                  </td>
-                </tr>
-              </tbody>
-            </table>
+            <DashboardBusinessTable
+              :items="preview.rows"
+              :fields="[{ key: 'line', label: '行', type: 'number' }, { key: 'studentNo', label: '学号', type: 'text' }, { key: 'status', label: '状态', type: 'text' }, { key: 'message', label: '说明', type: 'text' }]"
+              row-key="line"
+            >
+              <template #table-line="{ item: row }">
+                <div class="py-1 pr-2">
+                  {{ row.line }}
+                </div>
+              </template>
+              <template #table-studentNo="{ item: row }">
+                <div class="py-1 pr-2">
+                  {{ row.studentNo ?? '—' }}
+                </div>
+              </template>
+              <template #table-status="{ item: row }">
+                <div class="py-1 pr-2">
+                  {{ row.status }}
+                </div>
+              </template>
+              <template #table-message="{ item: row }">
+                <div class="py-1">
+                  {{ row.message ?? '' }}
+                </div>
+              </template>
+            </DashboardBusinessTable>
           </div>
         </div>
       </section>

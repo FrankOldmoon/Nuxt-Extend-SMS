@@ -385,63 +385,49 @@ onBeforeUnmount(() => {
           v-else
           class="overflow-x-auto rounded-xl border border-default"
         >
-          <table class="w-full text-left text-sm">
-            <thead class="bg-elevated/50 text-xs text-muted">
-              <tr>
-                <th class="px-3 py-2">
-                  学生
-                </th>
-                <th class="px-3 py-2">
-                  类型
-                </th>
-                <th class="px-3 py-2">
-                  班级变化
-                </th>
-                <th class="px-3 py-2">
-                  生效日期
-                </th>
-                <th class="px-3 py-2">
-                  原因
-                </th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr
-                v-for="row in movements"
-                :key="row.id"
-                class="border-t border-default"
-              >
-                <td class="px-3 py-2">
-                  <p class="text-highlighted">
-                    {{ row.studentName ?? `#${row.studentId}` }}
-                  </p>
-                  <p class="font-mono text-xs text-muted">
-                    {{ row.studentNo ?? '—' }}
-                  </p>
-                </td>
-                <td class="px-3 py-2">
-                  <UBadge
-                    :color="TYPE_META[row.type]?.color ?? 'neutral'"
-                    variant="soft"
-                    size="sm"
-                  >
-                    {{ TYPE_META[row.type]?.label ?? row.type }}
-                  </UBadge>
-                </td>
-                <td class="px-3 py-2 text-xs text-toned">
-                  {{ row.fromClassName ?? '—' }}
-                  <span class="mx-1 text-muted">→</span>
-                  {{ row.toClassName ?? '—' }}
-                </td>
-                <td class="px-3 py-2 text-xs text-toned">
-                  {{ row.effectiveDate }}
-                </td>
-                <td class="max-w-48 truncate px-3 py-2 text-xs text-muted">
-                  {{ row.reason ?? '—' }}
-                </td>
-              </tr>
-            </tbody>
-          </table>
+          <DashboardBusinessTable
+            :items="movements"
+            :fields="[{ key: 'studentName', label: '学生', type: 'text' }, { key: 'type', label: '类型', type: 'text' }, { key: 'fromClassName', label: '班级变化', type: 'text' }, { key: 'effectiveDate', label: '生效日期', type: 'text' }, { key: 'reason', label: '原因', type: 'text' }]"
+          >
+            <template #table-studentName="{ item: row }">
+              <div class="px-3 py-2">
+                <p class="text-highlighted">
+                  {{ row.studentName ?? `#${row.studentId}` }}
+                </p>
+                <p class="font-mono text-xs text-muted">
+                  {{ row.studentNo ?? '—' }}
+                </p>
+              </div>
+            </template>
+            <template #table-type="{ item: row }">
+              <div class="px-3 py-2">
+                <UBadge
+                  :color="TYPE_META[row.type]?.color ?? 'neutral'"
+                  variant="soft"
+                  size="sm"
+                >
+                  {{ TYPE_META[row.type]?.label ?? row.type }}
+                </UBadge>
+              </div>
+            </template>
+            <template #table-fromClassName="{ item: row }">
+              <div class="px-3 py-2 text-xs text-toned">
+                {{ row.fromClassName ?? '—' }}
+                <span class="mx-1 text-muted">→</span>
+                {{ row.toClassName ?? '—' }}
+              </div>
+            </template>
+            <template #table-effectiveDate="{ item: row }">
+              <div class="px-3 py-2 text-xs text-toned">
+                {{ row.effectiveDate }}
+              </div>
+            </template>
+            <template #table-reason="{ item: row }">
+              <div class="max-w-48 truncate px-3 py-2 text-xs text-muted">
+                {{ row.reason ?? '—' }}
+              </div>
+            </template>
+          </DashboardBusinessTable>
         </div>
       </section>
     </div>

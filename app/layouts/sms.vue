@@ -1,5 +1,6 @@
 <script setup lang="ts">
 const route = useRoute()
+const localePath = useLocalePath()
 const paletteOpen = ref(false)
 
 useHead({ meta: [{ name: 'robots', content: 'noindex, nofollow' }] })
@@ -18,8 +19,9 @@ const navItems = [
 ]
 
 function isActive(to: string): boolean {
-  if (to === '/sms') return route.path === '/sms'
-  return route.path === to || route.path.startsWith(`${to}/`)
+  const path = localePath(to)
+  if (to === '/sms') return route.path === path
+  return route.path === path || route.path.startsWith(`${path}/`)
 }
 </script>
 
@@ -62,7 +64,7 @@ function isActive(to: string): boolean {
         <NuxtLink
           v-for="item in navItems"
           :key="item.to"
-          :to="item.to"
+          :to="localePath(item.to)"
           class="flex items-center gap-2 rounded-lg px-2.5 py-2 text-sm transition-colors"
           :class="isActive(item.to) ? 'bg-primary/10 font-medium text-primary' : 'text-toned hover:bg-elevated'"
         >
@@ -93,14 +95,14 @@ function isActive(to: string): boolean {
         <NuxtLink
           v-for="item in navItems"
           :key="item.to"
-          :to="item.to"
+          :to="localePath(item.to)"
           class="shrink-0 rounded-lg px-2.5 py-1.5 text-xs"
           :class="isActive(item.to) ? 'bg-primary/10 font-medium text-primary' : 'text-toned'"
         >
           {{ item.label }}
         </NuxtLink>
         <NuxtLink
-          to="/sms/chat"
+          :to="localePath('/sms/chat')"
           class="ml-auto shrink-0 rounded-lg px-2 py-1 text-xs text-primary"
         >
           新建对话

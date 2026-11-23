@@ -948,6 +948,12 @@ export interface ScoreQuery {
   examId?: unknown
   studentId?: unknown
   classId?: unknown
+  subjectId?: unknown
+  /** Subject name/code, for example PE or 體育. */
+  subject?: unknown
+  termId?: unknown
+  status?: unknown
+  sort?: unknown
   /** 学生姓名或学号片段。 */
   query?: unknown
   limit?: unknown
@@ -991,6 +997,15 @@ export async function listScores(actor: SmsActor, options: ScoreQuery = {}) {
   if (examId) conditions.push(eq(smsExamScores.examId, examId))
   const classId = optionalId(options.classId)
   if (classId) conditions.push(eq(smsExams.classId, classId))
+  const subjectId = optionalId(options.subjectId)
+  if (subjectId) conditions.push(eq(smsExams.subjectId, subjectId))
+  const subject = typeof options.subject === 'string' ? options.subject.trim().slice(0, 120) : ''
+  if (subject) conditions.push(or(ilike(smsSubjects.name, `%${subject}%`), ilike(smsSubjects.code, `%${subject}%`))!)
+  const termId = optionalId(options.termId)
+  if (termId) conditions.push(eq(smsExams.termId, termId))
+  if (options.status) conditions.push(eq(smsExams.status, normalizeExamStatus(options.status)))
+  const scoreDescending = options.sort === 'scoreDesc'
+  if (scoreDescending) conditions.push(eq(smsExamScores.absent, false), sql`${smsExamScores.score} IS NOT NULL`)
   const query = typeof options.query === 'string' ? options.query.trim().slice(0, 80) : ''
   if (query) {
     const pattern = `%${query}%`
@@ -1023,7 +1038,9 @@ export async function listScores(actor: SmsActor, options: ScoreQuery = {}) {
     .leftJoin(smsClasses, eq(smsClasses.id, smsExams.classId))
     .leftJoin(smsSubjects, eq(smsSubjects.id, smsExams.subjectId))
     .where(and(...conditions))
-    .orderBy(desc(smsExams.examDate), asc(smsStudents.studentNo))
+    .orderBy(...(scoreDescending
+      ? [desc(smsExamScores.score), desc(smsExams.examDate), asc(smsStudents.studentNo), asc(smsExamScores.id)]
+      : [desc(smsExams.examDate), asc(smsStudents.studentNo)]))
     .limit(limit)
 
   return rows.map(row => ({
