@@ -382,61 +382,47 @@ onBeforeUnmount(() => {
           v-else
           class="overflow-x-auto rounded-xl border border-default"
         >
-          <table class="w-full text-left text-sm">
-            <thead class="bg-elevated/50 text-xs text-muted">
-              <tr>
-                <th class="px-3 py-2">
-                  学生
-                </th>
-                <th class="px-3 py-2">
-                  科目
-                </th>
-                <th class="px-3 py-2">
-                  学期
-                </th>
-                <th class="px-3 py-2">
-                  状态
-                </th>
-                <th class="px-3 py-2">
-                  选课时间
-                </th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr
-                v-for="row in elections"
-                :key="row.id"
-                class="border-t border-default"
-              >
-                <td class="px-3 py-2">
-                  <p class="text-highlighted">
-                    {{ row.studentName ?? `#${row.studentId}` }}
-                  </p>
-                  <p class="font-mono text-xs text-muted">
-                    {{ row.studentNo ?? '—' }}
-                  </p>
-                </td>
-                <td class="px-3 py-2 text-toned">
-                  {{ row.subjectName ?? `#${row.subjectId}` }}
-                </td>
-                <td class="px-3 py-2 text-xs text-toned">
-                  {{ row.termName ?? `#${row.termId}` }}
-                </td>
-                <td class="px-3 py-2">
-                  <UBadge
-                    color="success"
-                    variant="soft"
-                    size="sm"
-                  >
-                    {{ row.status === 'selected' ? '已选' : '已退' }}
-                  </UBadge>
-                </td>
-                <td class="px-3 py-2 text-xs text-muted">
-                  {{ new Date(row.electedAt).toLocaleString() }}
-                </td>
-              </tr>
-            </tbody>
-          </table>
+          <DashboardBusinessTable
+            :items="elections"
+            :fields="[{ key: 'studentName', label: '学生', type: 'text' }, { key: 'subjectName', label: '科目', type: 'text' }, { key: 'termName', label: '学期', type: 'text' }, { key: 'status', label: '状态', type: 'text' }, { key: 'electedAt', label: '选课时间', type: 'text' }]"
+          >
+            <template #table-studentName="{ item: row }">
+              <div class="px-3 py-2">
+                <p class="text-highlighted">
+                  {{ row.studentName ?? `#${row.studentId}` }}
+                </p>
+                <p class="font-mono text-xs text-muted">
+                  {{ row.studentNo ?? '—' }}
+                </p>
+              </div>
+            </template>
+            <template #table-subjectName="{ item: row }">
+              <div class="px-3 py-2 text-toned">
+                {{ row.subjectName ?? `#${row.subjectId}` }}
+              </div>
+            </template>
+            <template #table-termName="{ item: row }">
+              <div class="px-3 py-2 text-xs text-toned">
+                {{ row.termName ?? `#${row.termId}` }}
+              </div>
+            </template>
+            <template #table-status="{ item: row }">
+              <div class="px-3 py-2">
+                <UBadge
+                  color="success"
+                  variant="soft"
+                  size="sm"
+                >
+                  {{ row.status === 'selected' ? '已选' : '已退' }}
+                </UBadge>
+              </div>
+            </template>
+            <template #table-electedAt="{ item: row }">
+              <div class="px-3 py-2 text-xs text-muted">
+                {{ new Date(row.electedAt).toLocaleString() }}
+              </div>
+            </template>
+          </DashboardBusinessTable>
         </div>
       </section>
     </div>

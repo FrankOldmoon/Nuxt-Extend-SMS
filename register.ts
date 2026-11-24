@@ -183,77 +183,79 @@ function scopedFeatures(extra: Partial<TableFeatures> = {}): TableFeatures {
 
 const studentFields: FieldMeta[] = [
   field({ key: 'id', label: 'ID', type: 'number', nullable: false, editable: false, showInForm: false }),
-  field({ key: 'name', label: 'Name', type: 'text', nullable: false, validation: { required: true } }),
-  field({ key: 'studentNo', label: 'Student No', type: 'text', nullable: false, validation: { required: true } }),
-  field({ key: 'classId', label: 'Class', type: 'relation', nullable: true, relation: { table: 'classes', labelKey: 'name', valueKey: 'id' } }),
-  field({ key: 'userId', label: 'User ID', type: 'number', nullable: true, showInTable: false }),
-  field({ key: 'deletedAt', label: 'Deleted', type: 'datetime', nullable: true, editable: false, showInForm: false, showInTable: false }),
-  field({ key: 'createdAt', label: 'Created', type: 'datetime', nullable: false, editable: false, showInForm: false })
+  field({ key: 'name', label: '姓名', type: 'text', nullable: false, validation: { required: true } }),
+  field({ key: 'studentNo', label: '学号', type: 'text', nullable: false, validation: { required: true } }),
+  field({ key: 'status', label: '状态', type: 'select', nullable: false, editable: false, showInForm: false,
+    options: [{ label: '在读', value: 'active' }, { label: '休学', value: 'suspended' }, { label: '已转出', value: 'transferred' }, { label: '已毕业', value: 'graduated' }] }),
+  field({ key: 'classId', label: '班级', type: 'relation', nullable: true, relation: { table: 'classes', labelKey: 'name', valueKey: 'id' } }),
+  field({ key: 'userId', label: '用户 ID', type: 'number', nullable: true, showInTable: false }),
+  field({ key: 'deletedAt', label: '删除时间', type: 'datetime', nullable: true, editable: false, showInForm: false, showInTable: false }),
+  field({ key: 'createdAt', label: '创建时间', type: 'datetime', nullable: false, editable: false, showInForm: false })
 ]
 
 const classFields: FieldMeta[] = [
   field({ key: 'id', label: 'ID', type: 'number', nullable: false, editable: false, showInForm: false }),
-  field({ key: 'name', label: 'Name', type: 'text', nullable: false, validation: { required: true } }),
-  field({ key: 'academicYearId', label: 'Academic Year', type: 'relation', nullable: true, relation: { table: 'academicYears', labelKey: 'name', valueKey: 'id' } }),
-  field({ key: 'gradeId', label: 'Grade', type: 'relation', nullable: true, relation: { table: 'grades', labelKey: 'name', valueKey: 'id' } }),
-  field({ key: 'grade', label: 'Grade (legacy)', type: 'text', nullable: true, showInTable: false }),
-  field({ key: 'deletedAt', label: 'Deleted', type: 'datetime', nullable: true, editable: false, showInForm: false, showInTable: false }),
-  field({ key: 'createdAt', label: 'Created', type: 'datetime', nullable: false, editable: false, showInForm: false })
+  field({ key: 'name', label: '名称', type: 'text', nullable: false, validation: { required: true } }),
+  field({ key: 'academicYearId', label: '学年', type: 'relation', nullable: true, relation: { table: 'academicYears', labelKey: 'name', valueKey: 'id' } }),
+  field({ key: 'gradeId', label: '年级', type: 'relation', nullable: true, relation: { table: 'grades', labelKey: 'name', valueKey: 'id' } }),
+  field({ key: 'grade', label: '旧年级标记', type: 'text', nullable: true, showInTable: false }),
+  field({ key: 'deletedAt', label: '删除时间', type: 'datetime', nullable: true, editable: false, showInForm: false, showInTable: false }),
+  field({ key: 'createdAt', label: '创建时间', type: 'datetime', nullable: false, editable: false, showInForm: false })
 ]
 
 const academicYearFields: FieldMeta[] = [
   field({ key: 'id', label: 'ID', type: 'number', nullable: false, editable: false, showInForm: false }),
-  field({ key: 'name', label: 'Name', type: 'text', nullable: false, validation: { required: true } }),
-  field({ key: 'startDate', label: 'Start date', type: 'date', nullable: false }),
-  field({ key: 'endDate', label: 'End date', type: 'date', nullable: false }),
-  field({ key: 'isCurrent', label: 'Current', type: 'boolean', nullable: false }),
-  field({ key: 'deletedAt', label: 'Deleted', type: 'datetime', nullable: true, editable: false, showInForm: false, showInTable: false }),
-  field({ key: 'createdAt', label: 'Created', type: 'datetime', nullable: false, editable: false, showInForm: false })
+  field({ key: 'name', label: '名称', type: 'text', nullable: false, validation: { required: true } }),
+  field({ key: 'startDate', label: '开始日期', type: 'date', nullable: false }),
+  field({ key: 'endDate', label: '结束日期', type: 'date', nullable: false }),
+  field({ key: 'isCurrent', label: '当前学年', type: 'boolean', nullable: false }),
+  field({ key: 'deletedAt', label: '删除时间', type: 'datetime', nullable: true, editable: false, showInForm: false, showInTable: false }),
+  field({ key: 'createdAt', label: '创建时间', type: 'datetime', nullable: false, editable: false, showInForm: false })
 ]
 
 const termFields: FieldMeta[] = [
   field({ key: 'id', label: 'ID', type: 'number', nullable: false, editable: false, showInForm: false }),
-  field({ key: 'academicYearId', label: 'Academic Year', type: 'relation', nullable: false, relation: { table: 'academicYears', labelKey: 'name', valueKey: 'id' } }),
-  field({ key: 'name', label: 'Name', type: 'text', nullable: false, validation: { required: true } }),
-  field({ key: 'startDate', label: 'Start date', type: 'date', nullable: false }),
-  field({ key: 'endDate', label: 'End date', type: 'date', nullable: false }),
-  field({ key: 'createdAt', label: 'Created', type: 'datetime', nullable: false, editable: false, showInForm: false })
+  field({ key: 'academicYearId', label: '学年', type: 'relation', nullable: false, relation: { table: 'academicYears', labelKey: 'name', valueKey: 'id' } }),
+  field({ key: 'name', label: '名称', type: 'text', nullable: false, validation: { required: true } }),
+  field({ key: 'startDate', label: '开始日期', type: 'date', nullable: false }),
+  field({ key: 'endDate', label: '结束日期', type: 'date', nullable: false }),
+  field({ key: 'createdAt', label: '创建时间', type: 'datetime', nullable: false, editable: false, showInForm: false })
 ]
 
 const gradeFields: FieldMeta[] = [
   field({ key: 'id', label: 'ID', type: 'number', nullable: false, editable: false, showInForm: false }),
-  field({ key: 'name', label: 'Name', type: 'text', nullable: false, validation: { required: true } }),
-  field({ key: 'level', label: 'Level', type: 'number', nullable: true }),
-  field({ key: 'deletedAt', label: 'Deleted', type: 'datetime', nullable: true, editable: false, showInForm: false, showInTable: false }),
-  field({ key: 'createdAt', label: 'Created', type: 'datetime', nullable: false, editable: false, showInForm: false })
+  field({ key: 'name', label: '名称', type: 'text', nullable: false, validation: { required: true } }),
+  field({ key: 'level', label: '层级', type: 'number', nullable: true }),
+  field({ key: 'deletedAt', label: '删除时间', type: 'datetime', nullable: true, editable: false, showInForm: false, showInTable: false }),
+  field({ key: 'createdAt', label: '创建时间', type: 'datetime', nullable: false, editable: false, showInForm: false })
 ]
 
 const subjectFields: FieldMeta[] = [
   field({ key: 'id', label: 'ID', type: 'number', nullable: false, editable: false, showInForm: false }),
-  field({ key: 'code', label: 'Code', type: 'text', nullable: false, validation: { required: true } }),
-  field({ key: 'name', label: 'Name', type: 'text', nullable: false, validation: { required: true } }),
-  field({ key: 'deletedAt', label: 'Deleted', type: 'datetime', nullable: true, editable: false, showInForm: false, showInTable: false }),
-  field({ key: 'createdAt', label: 'Created', type: 'datetime', nullable: false, editable: false, showInForm: false })
+  field({ key: 'code', label: '编码', type: 'text', nullable: false, validation: { required: true } }),
+  field({ key: 'name', label: '名称', type: 'text', nullable: false, validation: { required: true } }),
+  field({ key: 'deletedAt', label: '删除时间', type: 'datetime', nullable: true, editable: false, showInForm: false, showInTable: false }),
+  field({ key: 'createdAt', label: '创建时间', type: 'datetime', nullable: false, editable: false, showInForm: false })
 ]
 
 const teacherFields: FieldMeta[] = [
   field({ key: 'id', label: 'ID', type: 'number', nullable: false, editable: false, showInForm: false }),
-  field({ key: 'userId', label: 'User ID', type: 'number', nullable: false, validation: { required: true } }),
-  field({ key: 'name', label: 'Name', type: 'text', nullable: true }),
-  field({ key: 'employeeNo', label: 'Employee No', type: 'text', nullable: true }),
-  field({ key: 'deletedAt', label: 'Deleted', type: 'datetime', nullable: true, editable: false, showInForm: false, showInTable: false }),
-  field({ key: 'createdAt', label: 'Created', type: 'datetime', nullable: false, editable: false, showInForm: false })
+  field({ key: 'userId', label: '用户 ID', type: 'number', nullable: false, validation: { required: true } }),
+  field({ key: 'name', label: '姓名', type: 'text', nullable: true }),
+  field({ key: 'employeeNo', label: '教职员编号', type: 'text', nullable: true }),
+  field({ key: 'deletedAt', label: '删除时间', type: 'datetime', nullable: true, editable: false, showInForm: false, showInTable: false }),
+  field({ key: 'createdAt', label: '创建时间', type: 'datetime', nullable: false, editable: false, showInForm: false })
 ]
 
 const enrollmentFields: FieldMeta[] = [
   field({ key: 'id', label: 'ID', type: 'number', nullable: false, editable: false, showInForm: false }),
-  field({ key: 'studentId', label: 'Student', type: 'relation', nullable: false, relation: { table: 'students', labelKey: 'name', valueKey: 'id' } }),
-  field({ key: 'classId', label: 'Class', type: 'relation', nullable: false, relation: { table: 'classes', labelKey: 'name', valueKey: 'id' } }),
-  field({ key: 'academicYearId', label: 'Academic Year', type: 'relation', nullable: false, relation: { table: 'academicYears', labelKey: 'name', valueKey: 'id' } }),
-  field({ key: 'termId', label: 'Term', type: 'relation', nullable: true, relation: { table: 'terms', labelKey: 'name', valueKey: 'id' } }),
+  field({ key: 'studentId', label: '学生', type: 'relation', nullable: false, relation: { table: 'students', labelKey: 'name', valueKey: 'id' } }),
+  field({ key: 'classId', label: '班级', type: 'relation', nullable: false, relation: { table: 'classes', labelKey: 'name', valueKey: 'id' } }),
+  field({ key: 'academicYearId', label: '学年', type: 'relation', nullable: false, relation: { table: 'academicYears', labelKey: 'name', valueKey: 'id' } }),
+  field({ key: 'termId', label: '学期', type: 'relation', nullable: true, relation: { table: 'terms', labelKey: 'name', valueKey: 'id' } }),
   field({
     key: 'status',
-    label: 'Status',
+    label: '状态',
     type: 'select',
     nullable: false,
     editable: false,
@@ -263,27 +265,27 @@ const enrollmentFields: FieldMeta[] = [
       { label: 'withdrawn', value: 'withdrawn' }
     ]
   }),
-  field({ key: 'enrolledAt', label: 'Enrolled at', type: 'datetime', nullable: false, editable: false, showInForm: false }),
-  field({ key: 'endedAt', label: 'Ended at', type: 'datetime', nullable: true, editable: false, showInForm: false }),
-  field({ key: 'createdAt', label: 'Created', type: 'datetime', nullable: false, editable: false, showInForm: false })
+  field({ key: 'enrolledAt', label: '入学时间', type: 'datetime', nullable: false, editable: false, showInForm: false }),
+  field({ key: 'endedAt', label: '结束时间', type: 'datetime', nullable: true, editable: false, showInForm: false }),
+  field({ key: 'createdAt', label: '创建时间', type: 'datetime', nullable: false, editable: false, showInForm: false })
 ]
 
 const guardianFields: FieldMeta[] = [
   field({ key: 'id', label: 'ID', type: 'number', nullable: false, editable: false, showInForm: false }),
-  field({ key: 'userId', label: 'User ID', type: 'number', nullable: false, validation: { required: true } }),
-  field({ key: 'name', label: 'Name', type: 'text', nullable: true }),
-  field({ key: 'phone', label: 'Phone', type: 'text', nullable: true }),
-  field({ key: 'deletedAt', label: 'Deleted', type: 'datetime', nullable: true, editable: false, showInForm: false, showInTable: false }),
-  field({ key: 'createdAt', label: 'Created', type: 'datetime', nullable: false, editable: false, showInForm: false })
+  field({ key: 'userId', label: '用户 ID', type: 'number', nullable: false, validation: { required: true } }),
+  field({ key: 'name', label: '姓名', type: 'text', nullable: true }),
+  field({ key: 'phone', label: '电话', type: 'text', nullable: true }),
+  field({ key: 'deletedAt', label: '删除时间', type: 'datetime', nullable: true, editable: false, showInForm: false, showInTable: false }),
+  field({ key: 'createdAt', label: '创建时间', type: 'datetime', nullable: false, editable: false, showInForm: false })
 ]
 
 const studentGuardianFields: FieldMeta[] = [
   field({ key: 'id', label: 'ID', type: 'number', nullable: false, editable: false, showInForm: false }),
-  field({ key: 'studentId', label: 'Student', type: 'relation', nullable: false, relation: { table: 'students', labelKey: 'name', valueKey: 'id' } }),
-  field({ key: 'guardianId', label: 'Guardian', type: 'relation', nullable: false, relation: { table: 'guardians', labelKey: 'name', valueKey: 'id' } }),
-  field({ key: 'relation', label: 'Relation', type: 'text', nullable: true }),
-  field({ key: 'isPrimary', label: 'Primary', type: 'boolean', nullable: false }),
-  field({ key: 'createdAt', label: 'Created', type: 'datetime', nullable: false, editable: false, showInForm: false })
+  field({ key: 'studentId', label: '学生', type: 'relation', nullable: false, relation: { table: 'students', labelKey: 'name', valueKey: 'id' } }),
+  field({ key: 'guardianId', label: '监护人', type: 'relation', nullable: false, relation: { table: 'guardians', labelKey: 'name', valueKey: 'id' } }),
+  field({ key: 'relation', label: '关系', type: 'text', nullable: true }),
+  field({ key: 'isPrimary', label: '主要联系人', type: 'boolean', nullable: false }),
+  field({ key: 'createdAt', label: '创建时间', type: 'datetime', nullable: false, editable: false, showInForm: false })
 ]
 
 // ---------------------------------------------------------------------------
@@ -296,7 +298,7 @@ const studentsMeta: TableMeta = {
   resource: 'students',
   permissions: permissionsFor('students'),
   exposure: 'generic-crud',
-  label: 'Students',
+  label: '学生',
   icon: 'i-lucide-graduation-cap',
   fields: studentFields,
   features: scopedFeatures({
@@ -316,7 +318,7 @@ const classesMeta: TableMeta = {
   resource: 'classes',
   permissions: permissionsFor('classes'),
   exposure: 'generic-crud',
-  label: 'Classes',
+  label: '班级',
   icon: 'i-lucide-school',
   fields: classFields,
   features: scopedFeatures({
@@ -334,7 +336,7 @@ const academicYearsMeta: TableMeta = {
   resource: 'academic-years',
   permissions: permissionsFor('academic-years'),
   exposure: 'generic-crud',
-  label: 'Academic Years',
+  label: '学年',
   icon: 'i-lucide-calendar-range',
   fields: academicYearFields,
   features: scopedFeatures({
@@ -351,7 +353,7 @@ const termsMeta: TableMeta = {
   resource: 'terms',
   permissions: permissionsFor('terms'),
   exposure: 'generic-crud',
-  label: 'Terms',
+  label: '学期',
   icon: 'i-lucide-calendar-days',
   fields: termFields,
   features: scopedFeatures({
@@ -367,7 +369,7 @@ const gradesMeta: TableMeta = {
   resource: 'grades',
   permissions: permissionsFor('grades'),
   exposure: 'generic-crud',
-  label: 'Grades',
+  label: '年级',
   icon: 'i-lucide-layers',
   fields: gradeFields,
   features: scopedFeatures({
@@ -384,7 +386,7 @@ const subjectsMeta: TableMeta = {
   resource: 'subjects',
   permissions: permissionsFor('subjects'),
   exposure: 'generic-crud',
-  label: 'Subjects',
+  label: '科目',
   icon: 'i-lucide-book-open',
   fields: subjectFields,
   features: scopedFeatures({
@@ -401,7 +403,7 @@ const teachersMeta: TableMeta = {
   resource: 'teachers',
   permissions: permissionsFor('teachers'),
   exposure: 'generic-crud',
-  label: 'Teachers',
+  label: '教师',
   icon: 'i-lucide-user-round-check',
   fields: teacherFields,
   features: scopedFeatures({
@@ -419,7 +421,7 @@ const enrollmentsMeta: TableMeta = {
   resource: 'enrollments',
   permissions: permissionsFor('enrollments'),
   exposure: 'generic-crud',
-  label: 'Enrollments',
+  label: '学籍记录',
   icon: 'i-lucide-clipboard-list',
   fields: enrollmentFields,
   features: scopedFeatures({
@@ -436,7 +438,7 @@ const guardiansMeta: TableMeta = {
   resource: 'guardians',
   permissions: permissionsFor('guardians'),
   exposure: 'generic-crud',
-  label: 'Guardians',
+  label: '监护人',
   icon: 'i-lucide-users-round',
   fields: guardianFields,
   features: scopedFeatures({
@@ -453,7 +455,7 @@ const studentGuardiansMeta: TableMeta = {
   resource: 'student-guardians',
   permissions: permissionsFor('student-guardians'),
   exposure: 'generic-crud',
-  label: 'Student Guardians',
+  label: '学生监护人关系',
   icon: 'i-lucide-link',
   fields: studentGuardianFields,
   features: scopedFeatures({
@@ -914,7 +916,13 @@ const smsApis: ModuleApiDefinition<SmsActor>[] = [
     path: 'sms/scores',
     schema: isRecord,
     authorize: actor => canUseSms(actor, 'read', 'scores'),
-    handler: (_event, actor, input) => listScores(actor, isRecord(input) ? input : {})
+    handler: (_event, actor, input) => {
+      const args = isRecord(input) ? input : {}
+      return listScores(actor, {
+        ...args,
+        query: typeof args.q === 'string' ? args.q : args.query
+      })
+    }
   },
   {
     id: 'sms.report-cards.generate',

@@ -46,7 +46,7 @@ const initialized = ref(false)
 const error = ref('')
 
 const examOptions = computed(() => [
-  { label: '全部考试', value: '' },
+  { label: '全部考试', value: '__all__' },
   ...exams.value.map(exam => ({
     label: `${exam.name} · ${exam.className ?? ''} · ${exam.examDate}`,
     value: String(exam.id)
@@ -54,7 +54,7 @@ const examOptions = computed(() => [
 ])
 
 const classOptions = computed(() => [
-  { label: '全部班级', value: '' },
+  { label: '全部班级', value: '__all__' },
   ...classes.value.map(item => ({ label: item.name, value: String(item.id) }))
 ])
 
@@ -70,6 +70,24 @@ async function loadOptions(): Promise<void> {
   ])
   exams.value = examRows
   classes.value = classRows
+}
+
+// Fetch this class's assessments so large schools are not limited to the
+// first 200 exams across the entire organization.
+let examOptionsRequest = 0
+async function loadClassExams(): Promise<void> {
+  const request = ++examOptionsRequest
+  try {
+    const data = await $fetch<ExamRow[]>('/api/modules/sms/exams', {
+      query: { classId: classId.value || undefined, limit: 200 }
+    })
+    if (request === examOptionsRequest) exams.value = data
+  } catch (err) {
+    if (request === examOptionsRequest) {
+      exams.value = []
+      error.value = err instanceof Error ? err.message : '考试列表加载失败'
+    }
+  }
 }
 
 async function load(): Promise<void> {
@@ -122,7 +140,12 @@ function exportCsv(): void {
 }
 
 let debounce: ReturnType<typeof setTimeout> | null = null
-watch([examId, classId, childId], () => void load())
+watch([examId, childId], () => void load())
+watch(classId, async () => {
+  examId.value = ''
+  await loadClassExams()
+  await load()
+})
 watch(search, () => {
   if (debounce) clearTimeout(debounce)
   debounce = setTimeout(() => void load(), 300)
@@ -187,16 +210,18 @@ onBeforeUnmount(() => {
           class="w-64"
         />
         <USelect
-          v-model="examId"
+          :model-value="examId || '__all__'"
           :items="examOptions"
           value-key="value"
           class="w-72"
+          @update:model-value="examId = $event === '__all__' ? '' : String($event)"
         />
         <USelect
-          v-model="classId"
+          :model-value="classId || '__all__'"
           :items="classOptions"
           value-key="value"
           class="w-44"
+          @update:model-value="classId = $event === '__all__' ? '' : String($event)"
         />
         <SmsChildSwitcher v-model="childId" />
       </div>
@@ -206,6 +231,13 @@ onBeforeUnmount(() => {
         class="rounded-lg border border-error/40 bg-error/10 p-3 text-xs text-error"
       >
         {{ error }}
+      </p>
+
+      <p
+        v-if="rows.length === 200"
+        class="text-xs text-muted"
+      >
+        当前显示最多 200 条成绩，请选择班级和考试，或搜索学号查看完整的个人成绩。
       </p>
 
       <div
@@ -230,61 +262,47 @@ onBeforeUnmount(() => {
         v-else
         class="overflow-x-auto rounded-xl border border-default"
       >
-        <table class="w-full text-left text-sm">
-          <thead class="bg-elevated/50 text-xs text-muted">
-            <tr>
-              <th class="px-3 py-2">
-                考试
-              </th>
-              <th class="px-3 py-2">
-                班级
-              </th>
-              <th class="px-3 py-2">
-                学生
-              </th>
-              <th class="px-3 py-2">
-                学号
-              </th>
-              <th class="px-3 py-2 text-right">
-                成绩
-              </th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr
-              v-for="row in rows"
-              :key="row.id"
-              class="border-t border-default"
-            >
-              <td class="px-3 py-2">
-                <p class="text-highlighted">
-                  {{ row.examName }}
-                </p>
-                <p class="text-xs text-muted">
-                  {{ row.examDate }} · {{ row.subjectName ?? '—' }}
-                </p>
-              </td>
-              <td class="px-3 py-2 text-toned">
-                {{ row.className ?? '—' }}
-              </td>
-              <td class="px-3 py-2 text-highlighted">
-                {{ row.studentName ?? `#${row.studentId}` }}
-              </td>
-              <td class="px-3 py-2 font-mono text-xs text-toned">
-                {{ row.studentNo ?? '—' }}
-              </td>
-              <td class="px-3 py-2 text-right">
-                <UBadge
-                  :color="row.absent ? 'warning' : row.score === null ? 'neutral' : 'primary'"
-                  variant="soft"
-                  size="sm"
-                >
-                  {{ formatScore(row) }}
-                </UBadge>
-              </td>
-            </tr>
-          </tbody>
-        </table>
+        <DashboardBusinessTable
+          :items="rows"
+          :fields="[{ key: 'examName', label: '考试', type: 'text' }, { key: 'className', label: '班级', type: 'text' }, { key: 'studentName', label: '学生', type: 'text' }, { key: 'studentNo', label: '学号', type: 'text' }, { key: 'score', label: '成绩', type: 'number' }]"
+        >
+          <template #table-examName="{ item: row }">
+            <div class="px-3 py-2">
+              <p class="text-highlighted">
+                {{ row.examName }}
+              </p>
+              <p class="text-xs text-muted">
+                {{ row.examDate }} · {{ row.subjectName ?? '—' }}
+              </p>
+            </div>
+          </template>
+          <template #table-className="{ item: row }">
+            <div class="px-3 py-2 text-toned">
+              {{ row.className ?? '—' }}
+            </div>
+          </template>
+          <template #table-studentName="{ item: row }">
+            <div class="px-3 py-2 text-highlighted">
+              {{ row.studentName ?? `#${row.studentId}` }}
+            </div>
+          </template>
+          <template #table-studentNo="{ item: row }">
+            <div class="px-3 py-2 font-mono text-xs text-toned">
+              {{ row.studentNo ?? '—' }}
+            </div>
+          </template>
+          <template #table-score="{ item: row }">
+            <div class="px-3 py-2 text-right">
+              <UBadge
+                :color="row.absent ? 'warning' : row.score === null ? 'neutral' : 'primary'"
+                variant="soft"
+                size="sm"
+              >
+                {{ formatScore(row) }}
+              </UBadge>
+            </div>
+          </template>
+        </DashboardBusinessTable>
       </div>
 
       <p class="text-center text-xs text-muted">

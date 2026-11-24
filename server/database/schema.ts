@@ -702,6 +702,8 @@ export const smsInvoices = pgTable(
     amount: numeric('amount', { precision: 12, scale: 2 }).notNull(),
     discount: numeric('discount', { precision: 12, scale: 2 }).notNull().default('0'),
     payable: numeric('payable', { precision: 12, scale: 2 }).notNull(),
+    /** Fee reductions approved with refunds; separate from the original discount. */
+    credited: numeric('credited', { precision: 12, scale: 2 }).notNull().default('0'),
     paid: numeric('paid', { precision: 12, scale: 2 }).notNull().default('0'),
     /** unpaid | partial | paid | void */
     status: varchar('status', { length: 20 }).notNull().default('unpaid'),
@@ -778,6 +780,8 @@ export const smsRefunds = pgTable(
     invoiceId: integer('invoice_id').notNull(),
     amount: numeric('amount', { precision: 12, scale: 2 }).notNull(),
     reason: varchar('reason', { length: 255 }),
+    /** Chosen by the approver; null on historical or undecided refunds. */
+    settlement: varchar('settlement', { length: 20 }),
     /** pending | approved | rejected */
     status: varchar('status', { length: 20 }).notNull().default('pending'),
     requestedBy: integer('requested_by').notNull(),

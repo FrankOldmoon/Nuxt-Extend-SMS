@@ -352,30 +352,33 @@ onMounted(async () => {
           <label class="space-y-1 text-xs text-muted">
             <span>学期</span>
             <USelect
-              v-model="termId"
-              :items="[{ label: '全部学期', value: '' }, ...termOptions]"
+              :model-value="termId || '__all__'"
+              :items="[{ label: '全部学期', value: '__all__' }, ...termOptions]"
               value-key="value"
+              @update:model-value="termId = $event === '__all__' ? '' : String($event)"
             />
           </label>
           <label class="space-y-1 text-xs text-muted">
             <span>班级</span>
             <USelect
-              v-model="classId"
-              :items="[{ label: '全部可见班级', value: '' }, ...classOptions]"
+              :model-value="classId || '__all__'"
+              :items="[{ label: '全部可见班级', value: '__all__' }, ...classOptions]"
               value-key="value"
+              @update:model-value="classId = $event === '__all__' ? '' : String($event)"
             />
           </label>
           <label class="space-y-1 text-xs text-muted">
             <span>状态</span>
             <USelect
-              v-model="status"
+              :model-value="status || '__all__'"
               :items="[
-                { label: '全部状态', value: '' },
+                { label: '全部状态', value: '__all__' },
                 { label: '草稿', value: 'draft' },
                 { label: '已发布', value: 'published' },
                 { label: '已归档', value: 'closed' }
               ]"
               value-key="value"
+              @update:model-value="status = $event === '__all__' ? '' : String($event)"
             />
           </label>
         </div>
@@ -405,68 +408,53 @@ onMounted(async () => {
           v-else
           class="overflow-x-auto rounded-xl border border-default"
         >
-          <table class="w-full text-left text-sm">
-            <thead class="bg-elevated/50 text-xs text-muted">
-              <tr>
-                <th class="px-3 py-2">
-                  考试
-                </th>
-                <th class="px-3 py-2">
-                  班级 / 科目
-                </th>
-                <th class="px-3 py-2">
-                  日期
-                </th>
-                <th class="px-3 py-2">
-                  类型
-                </th>
-                <th class="px-3 py-2">
-                  满分
-                </th>
-                <th class="px-3 py-2">
-                  状态
-                </th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr
-                v-for="exam in exams"
-                :key="exam.id"
-                class="border-t border-default"
-              >
-                <td class="px-3 py-2">
-                  <p class="text-highlighted">
-                    {{ exam.name }}
-                  </p>
-                  <p class="text-xs text-muted">
-                    {{ exam.termName ?? '未关联学期' }}
-                  </p>
-                </td>
-                <td class="px-3 py-2 text-toned">
-                  {{ exam.className ?? `#${exam.classId}` }}
-                  <span v-if="exam.subjectName"> · {{ exam.subjectName }}</span>
-                </td>
-                <td class="px-3 py-2 text-xs text-toned">
-                  {{ exam.examDate }}
-                </td>
-                <td class="px-3 py-2 text-xs text-toned">
-                  {{ EXAM_TYPES.find(item => item.value === exam.examType)?.label ?? exam.examType }}
-                </td>
-                <td class="px-3 py-2 text-xs text-toned">
-                  {{ exam.fullScore }}
-                </td>
-                <td class="px-3 py-2">
-                  <UBadge
-                    :color="exam.status === 'published' ? 'success' : exam.status === 'closed' ? 'neutral' : 'warning'"
-                    variant="soft"
-                    size="sm"
-                  >
-                    {{ EXAM_STATUS_LABELS[exam.status] ?? exam.status }}
-                  </UBadge>
-                </td>
-              </tr>
-            </tbody>
-          </table>
+          <DashboardBusinessTable
+            :items="exams"
+            :fields="[{ key: 'name', label: '考试', type: 'text' }, { key: 'className', label: '班级 / 科目', type: 'text' }, { key: 'examDate', label: '日期', type: 'text' }, { key: 'examType', label: '类型', type: 'text' }, { key: 'fullScore', label: '满分', type: 'number' }, { key: 'status', label: '状态', type: 'text' }]"
+          >
+            <template #table-name="{ item: exam }">
+              <div class="px-3 py-2">
+                <p class="text-highlighted">
+                  {{ exam.name }}
+                </p>
+                <p class="text-xs text-muted">
+                  {{ exam.termName ?? '未关联学期' }}
+                </p>
+              </div>
+            </template>
+            <template #table-className="{ item: exam }">
+              <div class="px-3 py-2 text-toned">
+                {{ exam.className ?? `#${exam.classId}` }}
+                <span v-if="exam.subjectName"> · {{ exam.subjectName }}</span>
+              </div>
+            </template>
+            <template #table-examDate="{ item: exam }">
+              <div class="px-3 py-2 text-xs text-toned">
+                {{ exam.examDate }}
+              </div>
+            </template>
+            <template #table-examType="{ item: exam }">
+              <div class="px-3 py-2 text-xs text-toned">
+                {{ EXAM_TYPES.find(item => item.value === exam.examType)?.label ?? exam.examType }}
+              </div>
+            </template>
+            <template #table-fullScore="{ item: exam }">
+              <div class="px-3 py-2 text-xs text-toned">
+                {{ exam.fullScore }}
+              </div>
+            </template>
+            <template #table-status="{ item: exam }">
+              <div class="px-3 py-2">
+                <UBadge
+                  :color="exam.status === 'published' ? 'success' : exam.status === 'closed' ? 'neutral' : 'warning'"
+                  variant="soft"
+                  size="sm"
+                >
+                  {{ EXAM_STATUS_LABELS[exam.status] ?? exam.status }}
+                </UBadge>
+              </div>
+            </template>
+          </DashboardBusinessTable>
         </div>
       </section>
 
@@ -504,9 +492,10 @@ onMounted(async () => {
           <label class="space-y-1 text-xs text-muted">
             <span>学期</span>
             <USelect
-              v-model="examForm.termId"
-              :items="[{ label: '沿用当前筛选学期', value: '' }, ...termOptions]"
+              :model-value="examForm.termId || '__all__'"
+              :items="[{ label: '沿用当前筛选学期', value: '__all__' }, ...termOptions]"
               value-key="value"
+              @update:model-value="examForm.termId = $event === '__all__' ? '' : String($event)"
             />
           </label>
           <label class="space-y-1 text-xs text-muted">
@@ -625,73 +614,59 @@ onMounted(async () => {
           v-else
           class="overflow-x-auto rounded-lg border border-default"
         >
-          <table class="w-full text-left text-sm">
-            <thead class="bg-elevated/50 text-xs text-muted">
-              <tr>
-                <th class="px-3 py-2">
-                  时间
-                </th>
-                <th class="px-3 py-2">
-                  考试
-                </th>
-                <th class="px-3 py-2">
-                  考场
-                </th>
-                <th class="px-3 py-2">
-                  监考
-                </th>
-                <th class="px-3 py-2">
-                  操作
-                </th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr
-                v-for="row in sessions"
-                :key="row.id"
-                class="border-t border-default"
-              >
-                <td class="px-3 py-2 text-xs text-toned">
-                  <p>{{ formatTime(row.startsAt) }}</p>
-                  <p class="text-muted">
-                    至 {{ formatTime(row.endsAt) }}
-                  </p>
-                </td>
-                <td class="px-3 py-2">
-                  <p class="text-highlighted">
-                    {{ row.examName ?? `#${row.examId}` }}
-                  </p>
-                  <p class="text-xs text-muted">
-                    {{ row.className ?? `#${row.classId}` }}
-                    <span v-if="row.subjectName"> · {{ row.subjectName }}</span>
-                  </p>
-                </td>
-                <td class="px-3 py-2 text-toned">
-                  {{ row.room }}
-                </td>
-                <td class="px-3 py-2 text-xs text-toned">
-                  <p>{{ row.invigilatorName ?? `#${row.invigilatorUserId}` }}</p>
-                  <p
-                    v-if="row.assistantInvigilatorName"
-                    class="text-muted"
-                  >
-                    辅助：{{ row.assistantInvigilatorName }}
-                  </p>
-                </td>
-                <td class="px-3 py-2">
-                  <UButton
-                    size="xs"
-                    color="error"
-                    variant="ghost"
-                    icon="i-lucide-x"
-                    @click="cancelSession(row)"
-                  >
-                    取消
-                  </UButton>
-                </td>
-              </tr>
-            </tbody>
-          </table>
+          <DashboardBusinessTable
+            :items="sessions"
+            :fields="[{ key: 'startsAt', label: '时间', type: 'text' }, { key: 'examName', label: '考试', type: 'text' }, { key: 'room', label: '考场', type: 'text' }, { key: 'invigilatorName', label: '监考', type: 'text' }]"
+          >
+            <template #table-startsAt="{ item: row }">
+              <div class="px-3 py-2 text-xs text-toned">
+                <p>{{ formatTime(row.startsAt) }}</p>
+                <p class="text-muted">
+                  至 {{ formatTime(row.endsAt) }}
+                </p>
+              </div>
+            </template>
+            <template #table-examName="{ item: row }">
+              <div class="px-3 py-2">
+                <p class="text-highlighted">
+                  {{ row.examName ?? `#${row.examId}` }}
+                </p>
+                <p class="text-xs text-muted">
+                  {{ row.className ?? `#${row.classId}` }}
+                  <span v-if="row.subjectName"> · {{ row.subjectName }}</span>
+                </p>
+              </div>
+            </template>
+            <template #table-room="{ item: row }">
+              <div class="px-3 py-2 text-toned">
+                {{ row.room }}
+              </div>
+            </template>
+            <template #table-invigilatorName="{ item: row }">
+              <div class="px-3 py-2 text-xs text-toned">
+                <p>{{ row.invigilatorName ?? `#${row.invigilatorUserId}` }}</p>
+                <p
+                  v-if="row.assistantInvigilatorName"
+                  class="text-muted"
+                >
+                  辅助：{{ row.assistantInvigilatorName }}
+                </p>
+              </div>
+            </template>
+            <template #table-actions="{ item: row }">
+              <div class="px-3 py-2">
+                <UButton
+                  size="xs"
+                  color="error"
+                  variant="ghost"
+                  icon="i-lucide-x"
+                  @click="cancelSession(row)"
+                >
+                  取消
+                </UButton>
+              </div>
+            </template>
+          </DashboardBusinessTable>
         </div>
       </section>
     </div>

@@ -9,6 +9,7 @@ interface ApprovalItem {
   subjectId: number
   step: number
   title: string
+  refundSettlement?: string | null
   assigneeUserId: number | null
   dueAt: string | null
   overdue: boolean
@@ -32,6 +33,12 @@ const { data, pending, error, refresh } = await useFetch<ApprovalItem[]>('/api/m
 
 const selected = ref<string[]>([])
 const comment = ref('')
+const refundSettlement = ref('')
+const REFUND_SETTLEMENTS = [
+  { label: '请选择退费账务处理', value: '__choose__' },
+  { label: '取消/减免等额费用（不增加欠费）', value: 'reduce_fee' },
+  { label: '仅退回款项（费用仍需缴纳）', value: 'return_payment' }
+]
 const submitting = ref(false)
 const actionError = ref('')
 const actionMessage = ref('')
@@ -88,6 +95,10 @@ async function decide(decision: 'approve' | 'reject'): Promise<void> {
     actionError.value = '请先选择待办审批'
     return
   }
+  if (decision === 'approve' && selectedItems.value.some(item => item.kind === 'refund') && !refundSettlement.value) {
+    actionError.value = '请先选择退费账务处理方式；所选退费将按同一种方式处理'
+    return
+  }
   submitting.value = true
   try {
     const result = await $fetch<{ total: number, succeeded: number, failed: number, results: Array<{ ok: boolean, message?: string }> }>(
@@ -96,6 +107,7 @@ async function decide(decision: 'approve' | 'reject'): Promise<void> {
         method: 'POST',
         body: {
           decision,
+          refundSettlement: refundSettlement.value || undefined,
           comment: comment.value || undefined,
           items: selectedItems.value.map(item => ({ kind: item.kind, subjectId: item.subjectId }))
         }
@@ -108,6 +120,7 @@ async function decide(decision: 'approve' | 'reject'): Promise<void> {
     }
     selected.value = []
     comment.value = ''
+    refundSettlement.value = ''
     await refresh()
   } catch (err) {
     actionError.value = err instanceof Error ? err.message : '审批提交失败'
@@ -209,6 +222,14 @@ onBeforeUnmount(() => {
           placeholder="审批意见（可选）"
           class="min-w-48 flex-1"
         />
+        <USelect
+          v-if="selectedItems.some(item => item.kind === 'refund')"
+          :model-value="refundSettlement || '__choose__'"
+          :items="REFUND_SETTLEMENTS"
+          aria-label="退费账务处理"
+          class="min-w-64"
+          @update:model-value="refundSettlement = $event === '__choose__' ? '' : String($event)"
+        />
         <UButton
           size="xs"
           color="success"
@@ -294,6 +315,12 @@ onBeforeUnmount(() => {
               </div>
               <p class="mt-2 truncate text-sm text-highlighted">
                 {{ item.title }}
+              </p>
+              <p
+                v-if="item.kind === 'refund' && item.status === 'approved'"
+                class="mt-1 text-xs text-muted"
+              >
+                {{ item.refundSettlement === 'reduce_fee' ? '已取消/减免等额费用，不增加欠费' : item.refundSettlement === 'return_payment' ? '仅退回款项，费用仍需缴纳' : '历史退费：沿用原账务处理' }}
               </p>
               <p class="mt-1 text-xs text-muted">
                 第 {{ item.step }} 步 ·

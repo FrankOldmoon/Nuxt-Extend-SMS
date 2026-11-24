@@ -1,4 +1,4 @@
-import { and, asc, eq, ilike, inArray, isNull, lt, or } from 'drizzle-orm'
+import { and, asc, eq, gt, ilike, inArray, isNull, or } from 'drizzle-orm'
 import { createError } from 'h3'
 import { db, writeAudit } from '../../../server/sdk'
 import { smsClasses, smsStudents, smsTeacherAssignments } from './database/schema'
@@ -11,7 +11,7 @@ export interface StudentSearchOptions {
   /** 精确过滤单个学生（用于异动页回填）。 */
   studentId?: number
   limit?: number
-  /** 游标分页：上一页最后一行的 id，返回更早的记录。 */
+  /** 游标分页：上一页最后一行的 id，返回后续记录。 */
   cursor?: number
 }
 
@@ -119,7 +119,7 @@ export async function searchStudents(actor: SmsActor, options: StudentSearchOpti
 
   const cursor = Number(options.cursor)
   if (Number.isSafeInteger(cursor) && cursor > 0) {
-    conditions.push(lt(smsStudents.id, cursor))
+    conditions.push(gt(smsStudents.id, cursor))
   }
 
   const query = options.query?.trim()
@@ -148,7 +148,7 @@ export async function searchStudents(actor: SmsActor, options: StudentSearchOpti
     .from(smsStudents)
     .leftJoin(smsClasses, eq(smsClasses.id, smsStudents.classId))
     .where(and(...conditions))
-    // 按 id 排序保证游标分页稳定（id < cursor），避免按姓名排序时跳行/重复。
+    // 升序与 id > cursor 配合，避免加载更多时重复前面的学生。
     .orderBy(asc(smsStudents.id))
     .limit(limit)
 }

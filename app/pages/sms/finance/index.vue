@@ -11,6 +11,7 @@ interface InvoiceRow {
   amount: number
   discount: number
   payable: number
+  credited: number
   paid: number
   status: string
   dueDate: string | null
@@ -141,7 +142,8 @@ async function loadPayments(): Promise<void> {
     payments.value = await $fetch<PaymentRow[]>('/api/modules/sms/payments', {
       query: { limit: 100 }
     })
-  } catch {
+  } catch (value) {
+    error.value = errorText(value)
     payments.value = []
   }
 }
@@ -151,7 +153,8 @@ async function loadReconciliations(): Promise<void> {
     reconciliations.value = await $fetch<ReconciliationRow[]>('/api/modules/sms/reconciliations', {
       query: { limit: 100 }
     })
-  } catch {
+  } catch (value) {
+    error.value = errorText(value)
     reconciliations.value = []
   }
 }
@@ -184,6 +187,7 @@ async function submitPayment(): Promise<void> {
       }
     })
     message.value = '缴费已登记'
+    invoiceStatus.value = ''
     selectedInvoice.value = null
     await Promise.all([loadInvoices(), loadPayments()])
   } catch (value) {
@@ -287,16 +291,17 @@ onMounted(async () => {
             应收账单
           </h2>
           <USelect
-            v-model="invoiceStatus"
+            :model-value="invoiceStatus || '__all__'"
             :items="[
               { label: '未缴', value: 'unpaid' },
               { label: '部分缴', value: 'partial' },
               { label: '已缴清', value: 'paid' },
               { label: '已作废', value: 'void' },
-              { label: '全部状态', value: '' }
+              { label: '全部状态', value: '__all__' }
             ]"
             value-key="value"
             class="w-40"
+            @update:model-value="invoiceStatus = $event === '__all__' ? '' : String($event)"
           />
         </div>
 
@@ -365,82 +370,73 @@ onMounted(async () => {
           v-else
           class="overflow-x-auto rounded-lg border border-default"
         >
-          <table class="w-full text-left text-sm">
-            <thead class="bg-elevated/50 text-xs text-muted">
-              <tr>
-                <th class="px-3 py-2">
-                  学生
-                </th>
-                <th class="px-3 py-2">
-                  收费项
-                </th>
-                <th class="px-3 py-2">
-                  应收
-                </th>
-                <th class="px-3 py-2">
-                  已收
-                </th>
-                <th class="px-3 py-2">
-                  状态
-                </th>
-                <th class="px-3 py-2">
-                  操作
-                </th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr
-                v-for="row in invoices"
-                :key="row.id"
-                class="border-t border-default"
-              >
-                <td class="px-3 py-2">
-                  <p class="text-highlighted">
-                    {{ row.studentName ?? `#${row.studentId}` }}
-                  </p>
-                  <p class="font-mono text-xs text-muted">
-                    {{ row.studentNo ?? '—' }}
-                  </p>
-                </td>
-                <td class="px-3 py-2 text-toned">
-                  {{ row.feeName ?? `#${row.feeItemId}` }}
-                  <p class="text-xs text-muted">
-                    到期 {{ row.dueDate ?? '未设置' }}
-                  </p>
-                </td>
-                <td class="px-3 py-2 text-xs text-toned">
-                  {{ money(row.payable) }}
-                </td>
-                <td class="px-3 py-2 text-xs text-toned">
-                  {{ money(row.paid) }}
-                </td>
-                <td class="px-3 py-2">
-                  <UBadge
-                    :color="INVOICE_STATUS[row.status]?.color ?? 'neutral'"
-                    variant="soft"
-                    size="sm"
-                  >
-                    {{ INVOICE_STATUS[row.status]?.label ?? row.status }}
-                  </UBadge>
-                </td>
-                <td class="px-3 py-2">
-                  <UButton
-                    v-if="canWrite && row.status !== 'paid' && row.status !== 'void'"
-                    size="xs"
-                    variant="soft"
-                    icon="i-lucide-wallet"
-                    @click="openPayment(row)"
-                  >
-                    登记缴费
-                  </UButton>
-                  <span
-                    v-else
-                    class="text-xs text-muted"
-                  >—</span>
-                </td>
-              </tr>
-            </tbody>
-          </table>
+          <DashboardBusinessTable
+            :items="invoices"
+            :fields="[{ key: 'studentName', label: '学生', type: 'text' }, { key: 'feeName', label: '收费项', type: 'text' }, { key: 'payable', label: '应收', type: 'number' }, { key: 'paid', label: '已收', type: 'number' }, { key: 'status', label: '状态', type: 'text' }]"
+          >
+            <template #table-studentName="{ item: row }">
+              <div class="px-3 py-2">
+                <p class="text-highlighted">
+                  {{ row.studentName ?? `#${row.studentId}` }}
+                </p>
+                <p class="font-mono text-xs text-muted">
+                  {{ row.studentNo ?? '—' }}
+                </p>
+              </div>
+            </template>
+            <template #table-feeName="{ item: row }">
+              <div class="px-3 py-2 text-toned">
+                {{ row.feeName ?? `#${row.feeItemId}` }}
+                <p class="text-xs text-muted">
+                  到期 {{ row.dueDate ?? '未设置' }}
+                </p>
+              </div>
+            </template>
+            <template #table-payable="{ item: row }">
+              <div class="px-3 py-2 text-xs text-toned">
+                {{ money(row.payable) }}
+                <p
+                  v-if="row.credited > 0"
+                  class="text-xs text-muted"
+                >
+                  退费减免 {{ money(row.credited) }}
+                </p>
+              </div>
+            </template>
+            <template #table-paid="{ item: row }">
+              <div class="px-3 py-2 text-xs text-toned">
+                {{ money(row.paid) }}
+              </div>
+            </template>
+            <template #table-status="{ item: row }">
+              <div class="px-3 py-2">
+                <UBadge
+                  :color="INVOICE_STATUS[row.status]?.color ?? 'neutral'"
+                  variant="soft"
+                  size="sm"
+                >
+                  {{ INVOICE_STATUS[row.status]?.label ?? row.status }}
+                </UBadge>
+              </div>
+            </template>
+            <template #table-actions="{ item: row }">
+              <div class="px-3 py-2">
+                <UButton
+                  v-if="canWrite && row.status !== 'paid' && row.status !== 'void'"
+                  size="xs"
+                  variant="soft"
+                  icon="i-lucide-wallet"
+                  @click="openPayment(row)"
+                >
+                  登记缴费
+                </UButton>
+                <span
+                  v-else
+                  class="text-xs text-muted"
+                >—</span>
+              </div>
+            </template>
+          </DashboardBusinessTable>
         </div>
       </section>
 
@@ -477,9 +473,10 @@ onMounted(async () => {
           <label class="space-y-1 text-xs text-muted">
             <span>支付方式</span>
             <USelect
-              v-model="reconciliationForm.method"
-              :items="[{ label: '全部方式', value: '' }, ...PAYMENT_METHODS]"
+              :model-value="reconciliationForm.method || '__all__'"
+              :items="[{ label: '全部方式', value: '__all__' }, ...PAYMENT_METHODS]"
               value-key="value"
+              @update:model-value="reconciliationForm.method = $event === '__all__' ? '' : String($event)"
             />
           </label>
           <label class="space-y-1 text-xs text-muted lg:col-span-1">
@@ -512,86 +509,71 @@ onMounted(async () => {
           v-else
           class="overflow-x-auto rounded-lg border border-default"
         >
-          <table class="w-full text-left text-sm">
-            <thead class="bg-elevated/50 text-xs text-muted">
-              <tr>
-                <th class="px-3 py-2">
-                  区间
-                </th>
-                <th class="px-3 py-2">
-                  方式
-                </th>
-                <th class="px-3 py-2">
-                  笔数
-                </th>
-                <th class="px-3 py-2">
-                  合计
-                </th>
-                <th class="px-3 py-2">
-                  状态
-                </th>
-                <th class="px-3 py-2">
-                  操作
-                </th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr
-                v-for="row in reconciliations"
-                :key="row.id"
-                class="border-t border-default"
-              >
-                <td class="px-3 py-2 text-xs text-toned">
-                  {{ row.periodStart }} ~ {{ row.periodEnd }}
-                  <p
-                    v-if="row.notes"
-                    class="text-muted"
-                  >
-                    {{ row.notes }}
-                  </p>
-                </td>
-                <td class="px-3 py-2 text-xs text-toned">
-                  {{ row.method ? METHOD_LABELS[row.method] ?? row.method : '全部方式' }}
-                </td>
-                <td class="px-3 py-2 text-xs text-toned">
-                  {{ row.paymentCount }}
-                </td>
-                <td class="px-3 py-2 text-xs text-toned">
-                  {{ money(row.totalAmount) }}
-                </td>
-                <td class="px-3 py-2">
-                  <UBadge
-                    :color="row.status === 'confirmed' ? 'success' : 'warning'"
-                    variant="soft"
-                    size="sm"
-                  >
-                    {{ row.status === 'confirmed' ? '已确认' : '草稿' }}
-                  </UBadge>
-                  <p
-                    v-if="row.confirmedAt"
-                    class="mt-1 text-[11px] text-muted"
-                  >
-                    {{ formatTime(row.confirmedAt) }}
-                  </p>
-                </td>
-                <td class="px-3 py-2">
-                  <UButton
-                    v-if="canWrite && row.status === 'draft'"
-                    size="xs"
-                    variant="soft"
-                    icon="i-lucide-lock"
-                    @click="confirmReconciliation(row)"
-                  >
-                    确认对账
-                  </UButton>
-                  <span
-                    v-else
-                    class="text-xs text-muted"
-                  >—</span>
-                </td>
-              </tr>
-            </tbody>
-          </table>
+          <DashboardBusinessTable
+            :items="reconciliations"
+            :fields="[{ key: 'periodStart', label: '区间', type: 'text' }, { key: 'method', label: '方式', type: 'text' }, { key: 'paymentCount', label: '笔数', type: 'number' }, { key: 'totalAmount', label: '合计', type: 'number' }, { key: 'status', label: '状态', type: 'text' }]"
+          >
+            <template #table-periodStart="{ item: row }">
+              <div class="px-3 py-2 text-xs text-toned">
+                {{ row.periodStart }} ~ {{ row.periodEnd }}
+                <p
+                  v-if="row.notes"
+                  class="text-muted"
+                >
+                  {{ row.notes }}
+                </p>
+              </div>
+            </template>
+            <template #table-method="{ item: row }">
+              <div class="px-3 py-2 text-xs text-toned">
+                {{ row.method ? METHOD_LABELS[row.method] ?? row.method : '全部方式' }}
+              </div>
+            </template>
+            <template #table-paymentCount="{ item: row }">
+              <div class="px-3 py-2 text-xs text-toned">
+                {{ row.paymentCount }}
+              </div>
+            </template>
+            <template #table-totalAmount="{ item: row }">
+              <div class="px-3 py-2 text-xs text-toned">
+                {{ money(row.totalAmount) }}
+              </div>
+            </template>
+            <template #table-status="{ item: row }">
+              <div class="px-3 py-2">
+                <UBadge
+                  :color="row.status === 'confirmed' ? 'success' : 'warning'"
+                  variant="soft"
+                  size="sm"
+                >
+                  {{ row.status === 'confirmed' ? '已确认' : '草稿' }}
+                </UBadge>
+                <p
+                  v-if="row.confirmedAt"
+                  class="mt-1 text-[11px] text-muted"
+                >
+                  {{ formatTime(row.confirmedAt) }}
+                </p>
+              </div>
+            </template>
+            <template #table-actions="{ item: row }">
+              <div class="px-3 py-2">
+                <UButton
+                  v-if="canWrite && row.status === 'draft'"
+                  size="xs"
+                  variant="soft"
+                  icon="i-lucide-lock"
+                  @click="confirmReconciliation(row)"
+                >
+                  确认对账
+                </UButton>
+                <span
+                  v-else
+                  class="text-xs text-muted"
+                >—</span>
+              </div>
+            </template>
+          </DashboardBusinessTable>
         </div>
       </section>
 
@@ -609,61 +591,46 @@ onMounted(async () => {
           v-else
           class="overflow-x-auto rounded-xl border border-default"
         >
-          <table class="w-full text-left text-sm">
-            <thead class="bg-elevated/50 text-xs text-muted">
-              <tr>
-                <th class="px-3 py-2">
-                  时间
-                </th>
-                <th class="px-3 py-2">
-                  学生
-                </th>
-                <th class="px-3 py-2">
-                  收费项
-                </th>
-                <th class="px-3 py-2">
-                  金额
-                </th>
-                <th class="px-3 py-2">
-                  方式
-                </th>
-                <th class="px-3 py-2">
-                  流水号
-                </th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr
-                v-for="row in payments"
-                :key="row.id"
-                class="border-t border-default"
-              >
-                <td class="px-3 py-2 text-xs text-toned">
-                  {{ formatTime(row.paidAt) }}
-                </td>
-                <td class="px-3 py-2">
-                  <p class="text-highlighted">
-                    {{ row.studentName ?? `#${row.studentId}` }}
-                  </p>
-                  <p class="font-mono text-xs text-muted">
-                    {{ row.studentNo ?? '—' }}
-                  </p>
-                </td>
-                <td class="px-3 py-2 text-xs text-toned">
-                  {{ row.feeName ?? `#${row.invoiceId}` }}
-                </td>
-                <td class="px-3 py-2 text-xs text-toned">
-                  {{ money(row.amount) }}
-                </td>
-                <td class="px-3 py-2 text-xs text-toned">
-                  {{ METHOD_LABELS[row.method] ?? row.method }}
-                </td>
-                <td class="px-3 py-2 font-mono text-xs text-muted">
-                  {{ row.reference ?? '—' }}
-                </td>
-              </tr>
-            </tbody>
-          </table>
+          <DashboardBusinessTable
+            :items="payments"
+            :fields="[{ key: 'paidAt', label: '时间', type: 'text' }, { key: 'studentName', label: '学生', type: 'text' }, { key: 'feeName', label: '收费项', type: 'text' }, { key: 'amount', label: '金额', type: 'number' }, { key: 'method', label: '方式', type: 'text' }, { key: 'reference', label: '流水号', type: 'text' }]"
+          >
+            <template #table-paidAt="{ item: row }">
+              <div class="px-3 py-2 text-xs text-toned">
+                {{ formatTime(row.paidAt) }}
+              </div>
+            </template>
+            <template #table-studentName="{ item: row }">
+              <div class="px-3 py-2">
+                <p class="text-highlighted">
+                  {{ row.studentName ?? `#${row.studentId}` }}
+                </p>
+                <p class="font-mono text-xs text-muted">
+                  {{ row.studentNo ?? '—' }}
+                </p>
+              </div>
+            </template>
+            <template #table-feeName="{ item: row }">
+              <div class="px-3 py-2 text-xs text-toned">
+                {{ row.feeName ?? `#${row.invoiceId}` }}
+              </div>
+            </template>
+            <template #table-amount="{ item: row }">
+              <div class="px-3 py-2 text-xs text-toned">
+                {{ money(row.amount) }}
+              </div>
+            </template>
+            <template #table-method="{ item: row }">
+              <div class="px-3 py-2 text-xs text-toned">
+                {{ METHOD_LABELS[row.method] ?? row.method }}
+              </div>
+            </template>
+            <template #table-reference="{ item: row }">
+              <div class="px-3 py-2 font-mono text-xs text-muted">
+                {{ row.reference ?? '—' }}
+              </div>
+            </template>
+          </DashboardBusinessTable>
         </div>
       </section>
     </div>

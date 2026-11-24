@@ -1129,5 +1129,15 @@ export const smsMigrations: ModuleMigration[] = [
           ON sms_payments (organization_id, paid_at);
       `)
     }
+  }, {
+    id: 'sms:026-refund-accounting',
+    checksum: '1',
+    async up(executor) {
+      const client = executor as SqlExecutor
+      await client.query(`
+        ALTER TABLE sms_invoices ADD COLUMN IF NOT EXISTS credited numeric(12,2) NOT NULL DEFAULT 0;
+        ALTER TABLE sms_refunds ADD COLUMN IF NOT EXISTS settlement varchar(20);
+      `)
+    }
   }
 ]

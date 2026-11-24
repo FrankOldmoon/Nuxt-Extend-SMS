@@ -20,6 +20,7 @@ export interface ApprovalBatchItemInput {
 }
 
 export interface ApprovalBatchInput {
+  refundSettlement?: unknown
   items?: unknown
   decision?: unknown
   comment?: unknown
@@ -84,7 +85,7 @@ export async function decideApprovalBatch(actor: SmsActor, input: ApprovalBatchI
       if (item.kind === 'leave') {
         await decideLeave(actor, { leaveId: item.subjectId, decision, comment })
       } else {
-        await approveRefund(actor, { refundId: item.subjectId, decision, comment })
+        await approveRefund(actor, { refundId: item.subjectId, decision, comment, settlement: input.refundSettlement })
       }
       results.push({ ...item, ok: true })
     } catch (error) {

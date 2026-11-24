@@ -320,9 +320,9 @@ describe('SMS demo module (database)', () => {
       requestedBy: 424242
     }).returning()
     expect(refund).toBeTruthy()
-    await expect(approveRefund(admin, { refundId: refund!.id, decision: 'approve' }))
+    await expect(approveRefund(admin, { refundId: refund!.id, decision: 'approve', settlement: 'reduce_fee' }))
       .rejects.toMatchObject({ statusCode: 404 })
-    await expect(approveRefund(teacher, { refundId: refund!.id, decision: 'approve' }))
+    await expect(approveRefund(teacher, { refundId: refund!.id, decision: 'approve', settlement: 'reduce_fee' }))
       .rejects.toMatchObject({ statusCode: 403 })
   })
 })
